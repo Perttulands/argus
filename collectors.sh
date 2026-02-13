@@ -34,7 +34,7 @@ collect_processes() {
 
 collect_athena() {
     echo "=== Athena ==="
-    memory_dir="$HOME/.openclaw/workspace/memory"
+    memory_dir="${ARGUS_MEMORY_DIR:-$HOME/.openclaw/workspace/memory}"
     if [[ -d "$memory_dir" ]]; then
         echo "Memory file modifications:"
         find "$memory_dir" -name "*.md" -type f -printf "%T+ %p\n" 2>/dev/null | sort -r | head -n5 || echo "No .md files found"

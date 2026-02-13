@@ -6,8 +6,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_FILE="${SCRIPT_DIR}/argus.service"
 SYSTEMD_DIR="/etc/systemd/system"
+ARGUS_ENV_DIR="/etc/argus"
+SYSTEM_ENV_FILE="${ARGUS_ENV_DIR}/argus.env"
 ENV_FILE="${SCRIPT_DIR}/argus.env"
 ENV_EXAMPLE="${SCRIPT_DIR}/argus.env.example"
+ARGUS_STATE_DIR="${ARGUS_STATE_DIR:-$HOME/.openclaw/workspace/state/argus}"
 
 echo "===== Argus Installation ====="
 echo ""
@@ -42,7 +45,13 @@ mkdir -p "${SCRIPT_DIR}/logs"
 
 # Create observation directory
 echo "Creating observation directory..."
-mkdir -p "$HOME/.openclaw/workspace/state/argus"
+mkdir -p "$ARGUS_STATE_DIR"
+
+# Install environment file
+echo "Installing environment file..."
+sudo mkdir -p "$ARGUS_ENV_DIR"
+sudo cp "$ENV_FILE" "$SYSTEM_ENV_FILE"
+sudo chmod 600 "$SYSTEM_ENV_FILE"
 
 # Install systemd service
 echo "Installing systemd service..."
