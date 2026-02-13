@@ -1,6 +1,6 @@
 # Argus Ops Watchdog
 
-Argus is a standalone systemd service that monitors the health of the ahjo-1 server and takes corrective action when needed. It's completely independent of OpenClaw and uses Claude Haiku to reason about system metrics.
+Argus is a standalone systemd service that monitors the health of the <YOUR_HOSTNAME> server and takes corrective action when needed. It's completely independent of OpenClaw and uses Claude Haiku to reason about system metrics.
 
 ## Architecture
 
@@ -290,7 +290,7 @@ MIT
 
 ## Contributing
 
-This is a personal ops tool for ahjo-1. If you're adapting it for your own server:
+This is a personal ops tool for <YOUR_HOSTNAME>. If you're adapting it for your own server:
 
 1. Update service names in `collectors.sh`
 2. Modify action allowlists in `actions.sh`
@@ -299,4 +299,4 @@ This is a personal ops tool for ahjo-1. If you're adapting it for your own serve
 
 ---
 
-**Argus**: Ever-watchful guardian of ahjo-1 🛡️
+**Argus**: Ever-watchful guardian of <YOUR_HOSTNAME> 🛡️

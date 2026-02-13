@@ -95,7 +95,7 @@ action_alert() {
 
 action_log() {
     local observation="$1"
-    local log_file="$HOME/.openclaw/workspace/state/argus/observations.md"
+    local log_file="${ARGUS_OBSERVATIONS_FILE:-$HOME/.openclaw/workspace/state/argus/observations.md}"
     local log_dir
     log_dir=$(dirname "$log_file")
 

@@ -7,10 +7,10 @@ Documentation=https://github.com/perttu/argus
 Type=simple
 User=perttu
 Group=perttu
-WorkingDirectory=$HOME/argus
-Environment="PATH=$HOME/.local/bin:$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
-EnvironmentFile=-$HOME/argus/argus.env
-ExecStart=$HOME/argus/argus.sh
+WorkingDirectory=~/argus
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=-/etc/argus/argus.env
+ExecStart=/usr/bin/bash -lc ./argus.sh
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -22,7 +22,6 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=$HOME/argus/logs $HOME/.openclaw/workspace/state/argus
 
 [Install]
 WantedBy=multi-user.target
