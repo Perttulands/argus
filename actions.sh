@@ -107,6 +107,106 @@ action_log() {
     echo "Logging observation to $log_file"
     echo "- **[$timestamp]** $observation" >> "$log_file"
     echo "Observation logged successfully"
+
+    # Check if this is a repeated problem (same observation 3+ times in last hour)
+    local repeat_count=0
+    local one_hour_ago
+    one_hour_ago=$(date -u -d '1 hour ago' +%Y-%m-%dT%H 2>/dev/null || date -u +%Y-%m-%dT%H)
+    # Extract the key phrase (first 50 chars) for dedup
+    local key_phrase="${observation:0:50}"
+    if [[ -f "$log_file" ]]; then
+        repeat_count=$(grep -c "$key_phrase" "$log_file" 2>/dev/null || echo 0)
+    fi
+
+    local problem_script="$HOME/.openclaw/workspace/scripts/problem-detected.sh"
+    if (( repeat_count >= 3 )) && [[ -x "$problem_script" ]]; then
+        # Repeated problem — create a bead (only if no bead exists for this issue)
+        local problems_file="$HOME/.openclaw/workspace/state/problems.jsonl"
+        if ! grep -q "$key_phrase" "$problems_file" 2>/dev/null; then
+            "$problem_script" "argus" "$observation" "Repeated ${repeat_count}x" \
+                >/dev/null 2>&1 || true  # REASON: problem-detected.sh creates the bead, best-effort escalation
+        fi
+    else
+        # First occurrence — just wake Athena
+        local wake_script="$HOME/.openclaw/workspace/scripts/wake-gateway.sh"
+        if [[ -x "$wake_script" ]]; then
+            "$wake_script" "Argus observation: $observation" \
+                >/dev/null 2>&1 || true  # REASON: wake is best-effort, observation is already logged above
+        fi
+    fi
+}
+
+# Auto-kill orphan node --test processes after repeated detection
+ORPHAN_STATE_FILE="${ARGUS_ORPHAN_STATE:-$HOME/.openclaw/workspace/state/argus-orphans.json}"
+ORPHAN_KILL_THRESHOLD=3
+
+action_check_and_kill_orphan_tests() {
+    local dry_run="${1:-false}"
+    local orphan_pids
+    orphan_pids=$(pgrep -f 'node.*--test' 2>/dev/null || true)
+
+    if [[ -z "$orphan_pids" ]]; then
+        # No orphans — reset counter
+        if [[ -f "$ORPHAN_STATE_FILE" ]]; then
+            rm -f "$ORPHAN_STATE_FILE"
+        fi
+        return 0
+    fi
+
+    local count
+    count=$(echo "$orphan_pids" | wc -l)
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Read or init state
+    local prev_count=0
+    local first_seen="$now"
+    if [[ -f "$ORPHAN_STATE_FILE" ]]; then
+        prev_count=$(jq -r '.count // 0' "$ORPHAN_STATE_FILE" 2>/dev/null || echo 0)
+        first_seen=$(jq -r '.first_seen // ""' "$ORPHAN_STATE_FILE" 2>/dev/null || echo "$now")
+        [[ -z "$first_seen" ]] && first_seen="$now"
+    fi
+
+    local new_count=$((prev_count + 1))
+
+    # Write state
+    mkdir -p "$(dirname "$ORPHAN_STATE_FILE")"
+    cat > "$ORPHAN_STATE_FILE" <<EOF
+{"pattern":"node --test","count":${new_count},"pids":${count},"first_seen":"${first_seen}","last_seen":"${now}"}
+EOF
+
+    local log_file="${LOG_DIR:-$HOME/argus/logs}/argus.log"
+
+    if (( new_count >= ORPHAN_KILL_THRESHOLD )); then
+        echo "Orphan node --test detected ${new_count}x (threshold: ${ORPHAN_KILL_THRESHOLD}) — auto-killing ${count} processes"
+        echo "[${now}] [ACTION] Auto-killing ${count} orphan node --test processes (detected ${new_count}x)" >> "$log_file"
+
+        if [[ "$dry_run" == "true" ]]; then
+            echo "[DRY-RUN] Would kill PIDs: $(echo "$orphan_pids" | tr '\n' ' ')"
+            return 0
+        fi
+
+        local pid
+        for pid in $orphan_pids; do
+            kill -TERM "$pid" 2>/dev/null || true  # REASON: process may have exited between detection and kill
+        done
+
+        # Wait 5s, then SIGKILL survivors
+        sleep 5
+        for pid in $orphan_pids; do
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null || true  # REASON: process may have exited during wait
+                echo "[${now}] [ACTION] SIGKILL sent to stubborn orphan PID ${pid}" >> "$log_file"
+            fi
+        done
+
+        # Reset state after kill
+        rm -f "$ORPHAN_STATE_FILE"
+        echo "Orphan cleanup complete"
+    else
+        echo "Orphan node --test detected ${new_count}/${ORPHAN_KILL_THRESHOLD} — tracking"
+        echo "[${now}] [INFO] Orphan node --test count: ${new_count}/${ORPHAN_KILL_THRESHOLD}" >> "$log_file"
+    fi
 }
 
 # Execute action from JSON

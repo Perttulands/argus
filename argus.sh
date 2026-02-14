@@ -101,6 +101,10 @@ process_llm_response() {
 run_monitoring_cycle() {
     log INFO "===== Starting monitoring cycle ====="
 
+    # Deterministic orphan auto-kill (no LLM needed)
+    log INFO "Checking orphan node --test processes..."
+    action_check_and_kill_orphan_tests || log ERROR "Orphan check failed"
+
     # Collect metrics
     log INFO "Collecting metrics..."
     local metrics
