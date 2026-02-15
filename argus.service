@@ -1,6 +1,7 @@
 [Unit]
 Description=Argus Ops Watchdog
-After=network.target
+After=network-online.target
+Wants=network-online.target
 Documentation=https://github.com/perttu/argus
 
 [Service]
@@ -12,10 +13,17 @@ Environment="PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bi
 EnvironmentFile=-/etc/argus/argus.env
 ExecStart=/usr/bin/bash -lc ./argus.sh
 Restart=always
-RestartSec=10
+RestartSec=30
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=argus
+
+# Resource limits — prevent runaway memory from LLM subprocess
+MemoryMax=1G
+MemoryHigh=768M
+
+# Give the process time to finish a cycle on stop
+TimeoutStopSec=30
 
 # Security hardening
 NoNewPrivileges=true

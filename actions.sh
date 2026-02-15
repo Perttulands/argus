@@ -2,9 +2,13 @@
 set -euo pipefail
 
 # actions.sh — ONLY allowlisted actions that Argus LLM can execute
+#
+# Security model: The LLM can only trigger these 5 actions.
+# Each action validates its inputs before execution.
 
 ALLOWED_SERVICES=("openclaw-gateway" "mcp-agent-mail")
-TELEGRAM_TIMEOUT=10  # seconds for Telegram API calls
+TELEGRAM_TIMEOUT=10   # seconds for Telegram API calls
+TELEGRAM_MAX_RETRIES=2 # retry failed Telegram sends
 
 action_restart_service() {
     local service_name="$1"
@@ -20,16 +24,32 @@ action_restart_service() {
     done
 
     if [[ "$allowed" != "true" ]]; then
-        echo "ERROR: Service '$service_name' not in allowlist" >&2
+        echo "BLOCKED: Service '$service_name' not in allowlist (${ALLOWED_SERVICES[*]})" >&2
         return 1
     fi
 
     echo "Restarting service: $service_name (reason: $reason)"
+
+    # Check current state first
+    local current_state
+    current_state=$(systemctl is-active "$service_name" 2>/dev/null || echo "unknown")
+    echo "  Current state: $current_state"
+
     if ! systemctl restart "$service_name" 2>&1; then
         echo "ERROR: systemctl restart $service_name failed" >&2
         return 1
     fi
-    echo "Service $service_name restarted successfully"
+
+    # Verify the restart succeeded
+    sleep 2
+    local new_state
+    new_state=$(systemctl is-active "$service_name" 2>/dev/null || echo "unknown")
+    if [[ "$new_state" == "active" ]]; then
+        echo "Service $service_name restarted successfully (now: $new_state)"
+    else
+        echo "WARNING: Service $service_name restart may have failed (state: $new_state)" >&2
+        return 1
+    fi
 }
 
 action_kill_pid() {
@@ -38,32 +58,42 @@ action_kill_pid() {
 
     # Validate PID is numeric
     if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
-        echo "ERROR: PID '$pid' is not a valid number" >&2
+        echo "BLOCKED: PID '$pid' is not a valid number" >&2
         return 1
     fi
 
-    # Validate PID exists and matches allowed process patterns
+    # Validate PID exists
     if ! ps -p "$pid" > /dev/null 2>&1; then
-        echo "ERROR: PID $pid does not exist" >&2
+        echo "ERROR: PID $pid does not exist (may have already exited)" >&2
         return 1
     fi
 
+    # Validate process matches allowed patterns
     local cmdline
     cmdline=$(ps -p "$pid" -o comm= 2>/dev/null || echo "")
 
     if [[ ! "$cmdline" =~ (node|claude|codex) ]]; then
-        echo "ERROR: PID $pid ($cmdline) does not match allowed patterns (node|claude|codex)" >&2
+        echo "BLOCKED: PID $pid ($cmdline) does not match allowed patterns (node|claude|codex)" >&2
         return 1
     fi
 
     echo "Killing process: PID $pid ($cmdline) (reason: $reason)"
-    kill "$pid"
-    echo "Process $pid killed successfully"
+    if kill "$pid" 2>/dev/null; then
+        echo "Process $pid sent SIGTERM"
+    else
+        echo "WARNING: kill $pid failed (may have already exited)" >&2
+    fi
 }
 
 action_kill_tmux() {
     local session_name="$1"
     local reason="${2:-No reason provided}"
+
+    # Sanitize session name — prevent injection via tmux target
+    if [[ "$session_name" =~ [^a-zA-Z0-9._-] ]]; then
+        echo "BLOCKED: Tmux session name '$session_name' contains invalid characters" >&2
+        return 1
+    fi
 
     # Check if session exists
     if ! tmux has-session -t "$session_name" 2>/dev/null; then
@@ -73,43 +103,61 @@ action_kill_tmux() {
 
     echo "Killing tmux session: $session_name (reason: $reason)"
     tmux kill-session -t "$session_name"
-    echo "Tmux session $session_name killed successfully"
+    echo "Tmux session '$session_name' killed"
 }
 
 action_alert() {
     local message="$1"
 
+    # Prepend hostname if not already present
+    local hostname_tag
+    hostname_tag=$(hostname -f 2>/dev/null || hostname)
+    if [[ "$message" != *"$hostname_tag"* ]] && [[ "$message" != *"["* ]]; then
+        message="[${hostname_tag}] ${message}"
+    fi
+
     if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]] || [[ -z "${TELEGRAM_CHAT_ID:-}" ]]; then
-        echo "WARNING: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set — alert logged but not sent" >&2
+        echo "WARNING: Telegram credentials not configured — alert logged only" >&2
         echo "ALERT (not sent): $message"
         return 0
     fi
 
-    # Build JSON payload safely with jq
+    # Build JSON payload safely with jq (prevents injection)
     local payload
     payload=$(jq -n \
         --arg chat_id "$TELEGRAM_CHAT_ID" \
         --arg text "$message" \
-        '{chat_id: $chat_id, text: $text}')
+        '{chat_id: $chat_id, text: $text, disable_web_page_preview: true}')
 
-    echo "Sending alert to Telegram: $message"
+    echo "Sending Telegram alert: $message"
 
-    local response http_code
-    response=$(curl -s -m "$TELEGRAM_TIMEOUT" -w '\n%{http_code}' -X POST \
-        "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-        -H "Content-Type: application/json" \
-        -d "$payload" 2>&1) || true
+    # Retry loop for transient network failures
+    local attempt
+    for (( attempt = 1; attempt <= TELEGRAM_MAX_RETRIES; attempt++ )); do
+        local response http_code
+        response=$(curl -s -m "$TELEGRAM_TIMEOUT" -w '\n%{http_code}' -X POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "$payload" 2>&1) || true
 
-    # Extract HTTP status code (last line)
-    http_code=$(echo "$response" | tail -n1)
-    response=$(echo "$response" | sed '$d')
+        # Extract HTTP status code (last line)
+        http_code=$(echo "$response" | tail -n1)
+        response=$(echo "$response" | sed '$d')
 
-    if [[ "$http_code" == "200" ]] && echo "$response" | jq -e '.ok' > /dev/null 2>&1; then
-        echo "Alert sent successfully"
-    else
-        echo "ERROR: Failed to send Telegram alert (HTTP $http_code): $response" >&2
-        return 1
-    fi
+        if [[ "$http_code" == "200" ]] && echo "$response" | jq -e '.ok' > /dev/null 2>&1; then
+            echo "Alert sent successfully"
+            return 0
+        fi
+
+        if (( attempt < TELEGRAM_MAX_RETRIES )); then
+            echo "Telegram attempt $attempt failed (HTTP $http_code), retrying in 3s..." >&2
+            sleep 3
+        else
+            echo "ERROR: Failed to send Telegram alert after $attempt attempts (HTTP $http_code)" >&2
+            # Don't return 1 — alert failure shouldn't fail the cycle
+            return 0
+        fi
+    done
 }
 
 action_log() {
@@ -123,9 +171,19 @@ action_log() {
     local timestamp
     timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-    echo "Logging observation to $log_file"
+    # Rotate observations file if it grows too large (> 500KB)
+    if [[ -f "$log_file" ]]; then
+        local obs_size
+        obs_size=$(stat -c%s "$log_file" 2>/dev/null || echo 0)
+        if (( obs_size > 512000 )); then
+            mv "$log_file" "${log_file}.old"
+            echo "# Argus Observations (rotated at $timestamp)" > "$log_file"
+            echo "" >> "$log_file"
+        fi
+    fi
+
     echo "- **[$timestamp]** $observation" >> "$log_file"
-    echo "Observation logged successfully"
+    echo "Observation logged: $observation"
 
     # Check if this is a repeated problem (same observation 3+ times)
     # Use fixed-string grep to avoid regex injection from observation text
@@ -186,11 +244,16 @@ action_check_and_kill_orphan_tests() {
 
     local new_count=$((prev_count + 1))
 
-    # Write state
+    # Write state safely with jq
     mkdir -p "$(dirname "$ORPHAN_STATE_FILE")"
-    cat > "$ORPHAN_STATE_FILE" <<EOF
-{"pattern":"node --test","count":${new_count},"pids":${count},"first_seen":"${first_seen}","last_seen":"${now}"}
-EOF
+    jq -n \
+        --arg pattern "node --test" \
+        --argjson count "$new_count" \
+        --argjson pids "$count" \
+        --arg first_seen "$first_seen" \
+        --arg last_seen "$now" \
+        '{pattern: $pattern, count: $count, pids: $pids, first_seen: $first_seen, last_seen: $last_seen}' \
+        > "$ORPHAN_STATE_FILE"
 
     local argus_log="${LOG_DIR:-${SCRIPT_DIR:-$HOME/argus}/logs}/argus.log"
 
@@ -203,23 +266,27 @@ EOF
             return 0
         fi
 
-        local pid
+        local pid killed=0
         for pid in $orphan_pids; do
-            kill -TERM "$pid" 2>/dev/null || true
+            if kill -TERM "$pid" 2>/dev/null; then
+                killed=$((killed + 1))
+            fi
         done
 
         # Wait 5s, then SIGKILL survivors
         sleep 5
+        local force_killed=0
         for pid in $orphan_pids; do
             if kill -0 "$pid" 2>/dev/null; then
                 kill -9 "$pid" 2>/dev/null || true
+                force_killed=$((force_killed + 1))
                 echo "[${now}] [ACTION] SIGKILL sent to stubborn orphan PID ${pid}" >> "$argus_log"
             fi
         done
 
         # Reset state after kill
         rm -f "$ORPHAN_STATE_FILE"
-        echo "Orphan cleanup complete"
+        echo "Orphan cleanup complete: $killed SIGTERM, $force_killed SIGKILL"
     else
         echo "Orphan node --test detected ${new_count}/${ORPHAN_KILL_THRESHOLD} — tracking"
         echo "[${now}] [INFO] Orphan node --test count: ${new_count}/${ORPHAN_KILL_THRESHOLD}" >> "$argus_log"
@@ -230,8 +297,14 @@ EOF
 execute_action() {
     local action_json="$1"
 
+    # Validate we got valid JSON
+    if ! echo "$action_json" | jq empty 2>/dev/null; then
+        echo "ERROR: Invalid action JSON: $action_json" >&2
+        return 1
+    fi
+
     local action_type
-    action_type=$(echo "$action_json" | jq -r '.type')
+    action_type=$(echo "$action_json" | jq -r '.type // "unknown"')
     local target
     target=$(echo "$action_json" | jq -r '.target // empty')
     local reason
@@ -249,16 +322,16 @@ execute_action() {
             ;;
         alert)
             local message
-            message=$(echo "$action_json" | jq -r '.message // .target')
+            message=$(echo "$action_json" | jq -r '.message // .target // "No message"')
             action_alert "$message"
             ;;
         log)
             local observation
-            observation=$(echo "$action_json" | jq -r '.observation // .target')
+            observation=$(echo "$action_json" | jq -r '.observation // .target // "No observation"')
             action_log "$observation"
             ;;
         *)
-            echo "ERROR: Unknown action type: $action_type" >&2
+            echo "ERROR: Unknown action type '$action_type' — only restart_service, kill_pid, kill_tmux, alert, log are allowed" >&2
             return 1
             ;;
     esac
