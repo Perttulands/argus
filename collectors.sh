@@ -2,11 +2,15 @@
 set -euo pipefail
 
 # collectors.sh — metric collection functions for Argus
+#
+# Each collector is wrapped to never fail fatally (set -e safe).
+# A failing collector outputs an error line but does not abort the cycle.
 
 collect_services() {
     echo "=== Services ==="
     for service in openclaw-gateway mcp-agent-mail; do
-        status=$(systemctl is-active "$service" 2>&1 || echo "unknown")
+        local status
+        status=$(systemctl is-active "$service" 2>/dev/null || echo "unknown")
         echo "$service: $status"
     done
 }
@@ -14,19 +18,23 @@ collect_services() {
 collect_system() {
     echo "=== System ==="
     echo "Memory:"
-    free -h | grep -E '(Mem|Swap)'
+    free -h 2>/dev/null | grep -E '(Mem|Swap)' || echo "free command failed"
     echo ""
     echo "Disk:"
-    df -h / | tail -n1
+    df -h / 2>/dev/null | tail -n1 || echo "df command failed"
     echo ""
     echo "Uptime and Load:"
-    uptime
+    uptime 2>/dev/null || echo "uptime command failed"
 }
 
 collect_processes() {
     echo "=== Processes ==="
     echo "Orphan node --test processes:"
-    pgrep -fa 'node.*--test' | wc -l || echo "0"
+    # Use pgrep -c for count; -f matches full cmdline
+    # Note: pgrep returns exit 1 when no matches, so we default to 0
+    local orphan_count
+    orphan_count=$(pgrep -cf 'node.*--test' 2>/dev/null || echo "0")
+    echo "$orphan_count"
     echo ""
     echo "Tmux sessions on openclaw socket:"
     tmux -S /tmp/openclaw-coding-agents.sock list-sessions 2>/dev/null | wc -l || echo "0"
@@ -34,7 +42,7 @@ collect_processes() {
 
 collect_athena() {
     echo "=== Athena ==="
-    memory_dir="${ARGUS_MEMORY_DIR:-$HOME/.openclaw/workspace/memory}"
+    local memory_dir="${ARGUS_MEMORY_DIR:-$HOME/.openclaw/workspace/memory}"
     if [[ -d "$memory_dir" ]]; then
         echo "Memory file modifications:"
         find "$memory_dir" -name "*.md" -type f -printf "%T+ %p\n" 2>/dev/null | sort -r | head -n5 || echo "No .md files found"
@@ -58,19 +66,20 @@ collect_agents() {
     tmux -S /tmp/openclaw-coding-agents.sock list-sessions -F "#{session_name}" 2>/dev/null || echo "No OpenClaw sessions"
 }
 
-# Main collection function that calls all collectors
+# Main collection function that calls all collectors.
+# Each collector runs in a subshell so a failure in one does not abort others.
 collect_all_metrics() {
     echo "===== ARGUS METRICS COLLECTION ====="
     echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo ""
-    collect_services
-    echo ""
-    collect_system
-    echo ""
-    collect_processes
-    echo ""
-    collect_athena
-    echo ""
-    collect_agents
+
+    local collectors=(collect_services collect_system collect_processes collect_athena collect_agents)
+    for collector in "${collectors[@]}"; do
+        if ! "$collector" 2>&1; then
+            echo "ERROR: ${collector} failed"
+        fi
+        echo ""
+    done
+
     echo "===== END METRICS ====="
 }

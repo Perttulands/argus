@@ -4,6 +4,7 @@ set -euo pipefail
 # actions.sh — ONLY allowlisted actions that Argus LLM can execute
 
 ALLOWED_SERVICES=("openclaw-gateway" "mcp-agent-mail")
+TELEGRAM_TIMEOUT=10  # seconds for Telegram API calls
 
 action_restart_service() {
     local service_name="$1"
@@ -24,13 +25,22 @@ action_restart_service() {
     fi
 
     echo "Restarting service: $service_name (reason: $reason)"
-    systemctl restart "$service_name"
+    if ! systemctl restart "$service_name" 2>&1; then
+        echo "ERROR: systemctl restart $service_name failed" >&2
+        return 1
+    fi
     echo "Service $service_name restarted successfully"
 }
 
 action_kill_pid() {
     local pid="$1"
     local reason="${2:-No reason provided}"
+
+    # Validate PID is numeric
+    if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: PID '$pid' is not a valid number" >&2
+        return 1
+    fi
 
     # Validate PID exists and matches allowed process patterns
     if ! ps -p "$pid" > /dev/null 2>&1; then
@@ -70,25 +80,34 @@ action_alert() {
     local message="$1"
 
     if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]] || [[ -z "${TELEGRAM_CHAT_ID:-}" ]]; then
-        echo "ERROR: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set" >&2
-        return 1
+        echo "WARNING: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set — alert logged but not sent" >&2
+        echo "ALERT (not sent): $message"
+        return 0
     fi
 
-    local escaped_message
-    escaped_message=$(echo "$message" | jq -Rs .)
+    # Build JSON payload safely with jq
+    local payload
+    payload=$(jq -n \
+        --arg chat_id "$TELEGRAM_CHAT_ID" \
+        --arg text "$message" \
+        '{chat_id: $chat_id, text: $text}')
 
     echo "Sending alert to Telegram: $message"
 
-    local response
-    response=$(curl -s -X POST \
+    local response http_code
+    response=$(curl -s -m "$TELEGRAM_TIMEOUT" -w '\n%{http_code}' -X POST \
         "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
         -H "Content-Type: application/json" \
-        -d "{\"chat_id\": \"${TELEGRAM_CHAT_ID}\", \"text\": ${escaped_message}, \"parse_mode\": \"Markdown\"}")
+        -d "$payload" 2>&1) || true
 
-    if echo "$response" | jq -e '.ok' > /dev/null 2>&1; then
+    # Extract HTTP status code (last line)
+    http_code=$(echo "$response" | tail -n1)
+    response=$(echo "$response" | sed '$d')
+
+    if [[ "$http_code" == "200" ]] && echo "$response" | jq -e '.ok' > /dev/null 2>&1; then
         echo "Alert sent successfully"
     else
-        echo "ERROR: Failed to send alert: $response" >&2
+        echo "ERROR: Failed to send Telegram alert (HTTP $http_code): $response" >&2
         return 1
     fi
 }
@@ -108,30 +127,28 @@ action_log() {
     echo "- **[$timestamp]** $observation" >> "$log_file"
     echo "Observation logged successfully"
 
-    # Check if this is a repeated problem (same observation 3+ times in last hour)
-    local repeat_count=0
-    local one_hour_ago
-    one_hour_ago=$(date -u -d '1 hour ago' +%Y-%m-%dT%H 2>/dev/null || date -u +%Y-%m-%dT%H)
-    # Extract the key phrase (first 50 chars) for dedup
+    # Check if this is a repeated problem (same observation 3+ times)
+    # Use fixed-string grep to avoid regex injection from observation text
     local key_phrase="${observation:0:50}"
+    local repeat_count=0
     if [[ -f "$log_file" ]]; then
-        repeat_count=$(grep -c "$key_phrase" "$log_file" 2>/dev/null || echo 0)
+        repeat_count=$(grep -cF "$key_phrase" "$log_file" 2>/dev/null || echo 0)
     fi
 
     local problem_script="$HOME/.openclaw/workspace/scripts/problem-detected.sh"
     if (( repeat_count >= 3 )) && [[ -x "$problem_script" ]]; then
         # Repeated problem — create a bead (only if no bead exists for this issue)
         local problems_file="$HOME/.openclaw/workspace/state/problems.jsonl"
-        if ! grep -q "$key_phrase" "$problems_file" 2>/dev/null; then
+        if ! grep -qF "$key_phrase" "$problems_file" 2>/dev/null; then
             "$problem_script" "argus" "$observation" "Repeated ${repeat_count}x" \
-                >/dev/null 2>&1 || true  # REASON: problem-detected.sh creates the bead, best-effort escalation
+                >/dev/null 2>&1 || true
         fi
     else
         # First occurrence — just wake Athena
         local wake_script="$HOME/.openclaw/workspace/scripts/wake-gateway.sh"
         if [[ -x "$wake_script" ]]; then
             "$wake_script" "Argus observation: $observation" \
-                >/dev/null 2>&1 || true  # REASON: wake is best-effort, observation is already logged above
+                >/dev/null 2>&1 || true
         fi
     fi
 }
@@ -175,11 +192,11 @@ action_check_and_kill_orphan_tests() {
 {"pattern":"node --test","count":${new_count},"pids":${count},"first_seen":"${first_seen}","last_seen":"${now}"}
 EOF
 
-    local log_file="${LOG_DIR:-$HOME/argus/logs}/argus.log"
+    local argus_log="${LOG_DIR:-${SCRIPT_DIR:-$HOME/argus}/logs}/argus.log"
 
     if (( new_count >= ORPHAN_KILL_THRESHOLD )); then
         echo "Orphan node --test detected ${new_count}x (threshold: ${ORPHAN_KILL_THRESHOLD}) — auto-killing ${count} processes"
-        echo "[${now}] [ACTION] Auto-killing ${count} orphan node --test processes (detected ${new_count}x)" >> "$log_file"
+        echo "[${now}] [ACTION] Auto-killing ${count} orphan node --test processes (detected ${new_count}x)" >> "$argus_log"
 
         if [[ "$dry_run" == "true" ]]; then
             echo "[DRY-RUN] Would kill PIDs: $(echo "$orphan_pids" | tr '\n' ' ')"
@@ -188,15 +205,15 @@ EOF
 
         local pid
         for pid in $orphan_pids; do
-            kill -TERM "$pid" 2>/dev/null || true  # REASON: process may have exited between detection and kill
+            kill -TERM "$pid" 2>/dev/null || true
         done
 
         # Wait 5s, then SIGKILL survivors
         sleep 5
         for pid in $orphan_pids; do
             if kill -0 "$pid" 2>/dev/null; then
-                kill -9 "$pid" 2>/dev/null || true  # REASON: process may have exited during wait
-                echo "[${now}] [ACTION] SIGKILL sent to stubborn orphan PID ${pid}" >> "$log_file"
+                kill -9 "$pid" 2>/dev/null || true
+                echo "[${now}] [ACTION] SIGKILL sent to stubborn orphan PID ${pid}" >> "$argus_log"
             fi
         done
 
@@ -205,7 +222,7 @@ EOF
         echo "Orphan cleanup complete"
     else
         echo "Orphan node --test detected ${new_count}/${ORPHAN_KILL_THRESHOLD} — tracking"
-        echo "[${now}] [INFO] Orphan node --test count: ${new_count}/${ORPHAN_KILL_THRESHOLD}" >> "$log_file"
+        echo "[${now}] [INFO] Orphan node --test count: ${new_count}/${ORPHAN_KILL_THRESHOLD}" >> "$argus_log"
     fi
 }
 

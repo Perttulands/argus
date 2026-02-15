@@ -8,7 +8,7 @@ Type=simple
 User=perttu
 Group=perttu
 WorkingDirectory=~/argus
-Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 EnvironmentFile=-/etc/argus/argus.env
 ExecStart=/usr/bin/bash -lc ./argus.sh
 Restart=always
@@ -22,6 +22,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=false
+ReadWritePaths=%h/.openclaw/workspace/state %h/argus/logs
 
 [Install]
 WantedBy=multi-user.target
