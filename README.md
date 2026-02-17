@@ -1,136 +1,116 @@
-# Argus Ops Watchdog
+# 👁️ Argus — The Hundred-Eyed Watchman
 
-Argus is a standalone systemd service that monitors server health and takes corrective action autonomously. It uses Claude Haiku to reason about system metrics every 5 minutes.
+_The ops watchdog that never blinks._
 
-## Architecture
+---
+
+In Greek myth, Argus Panoptes was a giant with a hundred eyes — some always open, even in sleep. Hera set him to guard Io, and nothing got past him. Our Argus has the same job, slightly less mythological: it watches your server, decides what's wrong, and fixes it before you notice.
+
+Argus is a standalone systemd service that monitors server health every 5 minutes. It collects metrics, feeds them to Claude Haiku for reasoning, and executes a narrow set of allowlisted actions. It can restart services, kill runaway processes, send alerts, and file problem reports — but it can't do anything else. That constraint is the whole point.
+
+You don't want your AI watchdog to be creative. You want it to be correct, boring, and relentless.
+
+## How It Works
 
 ```
 Every 5 minutes:
-  collect metrics -> send to Claude Haiku -> parse JSON response -> execute actions -> log results
+  collect metrics → reason with Claude Haiku → parse decision → execute actions → log results
 ```
 
-- **Standalone**: runs as a systemd service, independent of other systems
-- **AI-powered**: Claude Haiku analyzes metrics and decides what to do
-- **Safe by design**: LLM can only execute 5 allowlisted actions with input validation
-- **Self-monitoring**: tracks its own cycle success/failure and alerts on repeated failures
+Argus collects system metrics (CPU, memory, disk, swap, processes, service health), sends them to an LLM with a decision-making prompt, and acts on the response. The LLM can only execute **5 allowlisted actions** — there's no `exec("arbitrary shell command")` hiding in here.
+
+| Action | What It Does | Safety |
+|--------|-------------|--------|
+| `restart_service` | Restarts a named service | Service must be in explicit allowlist |
+| `kill_pid` | Kills a specific process | Must be numeric, must exist, must match `node\|claude\|codex` |
+| `kill_tmux` | Kills a tmux session | Session name sanitized |
+| `alert` | Sends a Telegram notification | Hostname auto-prepended, retry on failure |
+| `log` | Records an observation | Auto-escalates after 3+ consecutive repeats |
+
+Additionally, orphan `node --test` processes are auto-killed **deterministically** (no LLM involved) after 3 consecutive detections. Some things don't need AI. They need a cron job with opinions.
 
 ## Components
 
 | File | Purpose |
 |------|---------|
-| `argus.sh` | Main monitoring loop, LLM integration, log rotation |
-| `collectors.sh` | Metric collection (services, system, processes, Athena, agents) |
-| `actions.sh` | 5 allowlisted action executors with validation |
-| `prompt.md` | System prompt — the decision-making brain |
+| `argus.sh` | Main loop — metric collection, LLM calls, action execution, log rotation |
+| `collectors.sh` | Metric collectors — services, system stats, processes, agent sessions |
+| `actions.sh` | The 5 allowlisted action executors with input validation |
+| `prompt.md` | System prompt — Argus's brain. Edit this to change what it cares about |
 | `argus.service` | Systemd unit with resource limits and security hardening |
 | `install.sh` | Idempotent installer |
 
-## Monitored Metrics
-
-1. **Services**: `openclaw-gateway`, `mcp-agent-mail` — status and downtime
-2. **System**: memory (MB and %), disk, swap, CPU cores, load average, uptime
-3. **Processes**: orphan `node --test` count and age, tmux sessions
-4. **Athena**: memory file activity, API reachability (localhost:9000)
-5. **Agents**: tmux session names and counts
-
-## Allowlisted Actions
-
-The LLM can **only** execute these 5 actions:
-
-| Action | Target | Validation |
-|--------|--------|------------|
-| `restart_service` | `openclaw-gateway` or `mcp-agent-mail` | Service allowlist |
-| `kill_pid` | Specific PID | Must be numeric, must exist, must be node/claude/codex |
-| `kill_tmux` | Session name | Must exist, name sanitized |
-| `alert` | Telegram message | Hostname auto-prepended, retry on failure |
-| `log` | Observation text | Auto-escalates after 3+ repeats |
-
-Additionally, orphan `node --test` processes are auto-killed **deterministically** (no LLM involved) after 3 consecutive detections.
-
-## Installation
-
-### 1. Configure Environment
+## Install
 
 ```bash
-cd ~/argus
+git clone https://github.com/Perttulands/argus.git
+cd argus
 cp argus.env.example argus.env
-nano argus.env
-```
-
-Required in `argus.env`:
-- `ANTHROPIC_API_KEY` — for Claude API access
-
-Optional:
-- `TELEGRAM_BOT_TOKEN` — create bot with @BotFather
-- `TELEGRAM_CHAT_ID` — get from `https://api.telegram.org/bot<TOKEN>/getUpdates`
-
-### 2. Install Service
-
-```bash
+# Edit argus.env — add your ANTHROPIC_API_KEY (required)
+# Optionally add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID for alerts
 chmod +x install.sh
 ./install.sh
-```
-
-### 3. Verify
-
-```bash
-sudo systemctl status argus
-tail -f ~/argus/logs/argus.log
 ```
 
 ## Usage
 
 ```bash
+# Run a single cycle (no service needed)
+source argus.env && ./argus.sh --once
+
 # Service management
 sudo systemctl start|stop|restart|status argus
 
-# Logs
-sudo journalctl -u argus -f           # systemd journal
-tail -f ~/argus/logs/argus.log         # application log
+# Watch it work
+tail -f ~/argus/logs/argus.log
 
-# Debug
-cat ~/argus/logs/last_response.json | jq  # last LLM decision
-cat ~/argus/logs/cycle_state.json | jq    # cycle health
+# See its last decision
+cat ~/argus/logs/last_response.json | jq
 
-# Test single cycle (without service)
-source argus.env && ./argus.sh --once
+# Check cycle health
+cat ~/argus/logs/cycle_state.json | jq
 ```
 
 ## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ARGUS_INTERVAL` | `300` | Seconds between monitoring cycles |
-| `ARGUS_MEMORY_DIR` | `~/.openclaw/workspace/memory` | Athena memory directory |
-| `ARGUS_OBSERVATIONS_FILE` | `~/.openclaw/workspace/state/argus/observations.md` | Observation log |
-| `ARGUS_ORPHAN_STATE` | `~/.openclaw/workspace/state/argus-orphans.json` | Orphan tracking state |
-
-## Reliability Features
-
-- **Log rotation**: argus.log rotates at 10MB, keeps 3 backups
-- **Observation rotation**: observations.md rotates at 500KB
-- **Disk space guard**: skips LLM call if disk < 100MB free
-- **Telegram retry**: retries failed alerts (transient network issues)
-- **Self-monitoring**: tracks consecutive failures, alerts after 3
-- **JSON safety**: all state files written via `jq` (no injection from error messages)
-- **Signal handling**: clean shutdown on SIGTERM/SIGINT
-- **Systemd resource limits**: MemoryMax=1G prevents runaway processes
-
-## Security
-
-- No arbitrary command execution — only 5 allowlisted actions
-- PID kills require: numeric validation + process exists + name matches `node|claude|codex`
-- Service restarts limited to explicit allowlist
-- Tmux session names sanitized against injection
-- Telegram payloads built with `jq` (not string interpolation)
-- systemd: `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`
+| `ARGUS_INTERVAL` | `300` | Seconds between cycles |
+| `ARGUS_OBSERVATIONS_FILE` | (configurable) | Where observations are logged |
+| `ARGUS_ORPHAN_STATE` | (configurable) | Orphan process tracking state |
 
 ## Adapting for Your Server
 
-1. Edit service names in `collectors.sh` (`collect_services`)
+Argus is opinionated about what it monitors, but those opinions are easy to change:
+
+1. Edit service names in `collectors.sh`
 2. Update `ALLOWED_SERVICES` in `actions.sh`
-3. Customize decision rules in `prompt.md`
-4. Test with `./argus.sh --once` before enabling
+3. Customize the decision prompt in `prompt.md`
+4. Test with `./argus.sh --once` before enabling the service
+
+## Reliability
+
+- Log rotation at 10MB (keeps 3 backups)
+- Disk space guard — skips LLM call if < 100MB free
+- Telegram alert retry on transient failures
+- Self-monitoring — alerts after 3 consecutive cycle failures
+- JSON state written via `jq` (no injection from error messages)
+- Clean shutdown on SIGTERM/SIGINT
+- systemd resource limits: `MemoryMax=1G`
+
+## Security
+
+No arbitrary command execution. Every action is validated:
+
+- PIDs must be numeric, must exist, must match allowed process names
+- Service restarts limited to explicit allowlist
+- Tmux session names sanitized against injection
+- Telegram payloads built with `jq`, not string interpolation
+- systemd: `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`
+
+## Part of [Athena's Forge](https://github.com/Perttulands/athena-workspace)
+
+Argus is one of several tools in the Forge — an autonomous coding and operations system built around AI agents. See the [mythology](https://github.com/Perttulands/athena-workspace/blob/main/mythology.md) for the full story.
 
 ## License
 
