@@ -1,10 +1,10 @@
-# 👁️ Argus — The Hundred-Eyed Watchman
+# 👁️ Argus — The The Faithful Hound
 
 _The ops watchdog that never blinks._
 
 ---
 
-In Greek myth, Argus Panoptes was a giant with a hundred eyes — some always open, even in sleep. Hera set him to guard Io, and nothing got past him. Our Argus has the same job, slightly less mythological: it watches your server, decides what's wrong, and fixes it before you notice.
+In the Odyssey, Argus was Odysseus's dog — the one who waited twenty years and was the only one who recognised his master when he came home. Loyalty that outlasts everything. Our Argus has that same devotion: it watches your server, decides what's wrong, and fixes it before you notice.
 
 Argus is a standalone systemd service that monitors server health every 5 minutes. It collects metrics, feeds them to Claude Haiku for reasoning, and executes a narrow set of allowlisted actions. It can restart services, kill runaway processes, send alerts, and file problem reports — but it can't do anything else. That constraint is the whole point.
 
@@ -108,9 +108,9 @@ No arbitrary command execution. Every action is validated:
 - Telegram payloads built with `jq`, not string interpolation
 - systemd: `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`
 
-## Part of [Athena's Forge](https://github.com/Perttulands/athena-workspace)
+## Part of [Athena's Agora](https://github.com/Perttulands/athena-workspace)
 
-Argus is one of several tools in the Forge — an autonomous coding and operations system built around AI agents. See the [mythology](https://github.com/Perttulands/athena-workspace/blob/main/mythology.md) for the full story.
+Argus is one of several tools in the Agora — an autonomous coding and operations system built around AI agents. See the [mythology](https://github.com/Perttulands/athena-workspace/blob/main/mythology.md) for the full story.
 
 ## License
 
