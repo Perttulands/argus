@@ -10,11 +10,22 @@ set -euo pipefail
 
 collect_services() {
     echo "=== Services ==="
-    for service in openclaw-gateway mcp-agent-mail; do
+
+    # openclaw-gateway: check port 18500 (may run outside systemd)
+    echo -n "openclaw-gateway: "
+    local gw_http
+    gw_http=$(curl -s -o /dev/null -w '%{http_code}' -m 5 http://localhost:18500/ 2>/dev/null) || gw_http="failed"
+    if [[ "$gw_http" == "000" || "$gw_http" == "failed" ]]; then
+        echo "DOWN (port 18500 unreachable)"
+    else
+        echo "UP (port 18500, HTTP $gw_http)"
+    fi
+
+    # mcp-agent-mail: check systemd status
+    for service in mcp-agent-mail; do
         local status
         status=$(systemctl is-active "$service" 2>/dev/null || echo "unknown")
         echo "$service: $status"
-        # If inactive, include how long it's been down
         if [[ "$status" == "inactive" || "$status" == "failed" ]]; then
             local since
             since=$(systemctl show "$service" --property=InactiveEnterTimestamp --value 2>/dev/null || echo "unknown")
