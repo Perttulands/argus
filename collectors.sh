@@ -107,7 +107,7 @@ collect_processes() {
     # Orphan node --test — use pgrep -c; exclude our own grep
     echo "Orphan node --test processes:"
     local orphan_count
-    orphan_count=$(pgrep -cf 'node.*--test' 2>/dev/null || echo "0")
+    orphan_count=$(pgrep -cf 'node.*--test' 2>/dev/null) || orphan_count=0
     echo "  Count: $orphan_count"
 
     # If there are orphans, show the oldest one's age
@@ -123,13 +123,14 @@ collect_processes() {
 
     echo "Tmux sessions on openclaw socket:"
     local oc_count
-    oc_count=$(tmux -S /tmp/openclaw-coding-agents.sock list-sessions 2>/dev/null | wc -l || echo "0")
+    oc_count=$(tmux -S /tmp/openclaw-coding-agents.sock list-sessions 2>/dev/null | wc -l) || oc_count=0
+    oc_count=$(echo "$oc_count" | tr -d '[:space:]')
     echo "  Count: $oc_count"
 }
 
 collect_athena() {
     echo "=== Athena ==="
-    local memory_dir="${ARGUS_MEMORY_DIR:-$HOME/.openclaw/workspace/memory}"
+    local memory_dir="${ARGUS_MEMORY_DIR:-$HOME/athena/memory}"
     if [[ -d "$memory_dir" ]]; then
         echo "Memory file modifications (last 5):"
         find "$memory_dir" -name "*.md" -type f -printf "%T+ %p\n" 2>/dev/null | sort -r | head -n5 || echo "  No .md files found"
