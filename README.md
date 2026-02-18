@@ -1,5 +1,8 @@
 # 👁️ Argus — The The Faithful Hound
 
+![Banner](banner.jpg)
+
+
 _The ops watchdog that never blinks._
 
 ---
