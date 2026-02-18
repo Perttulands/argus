@@ -10,7 +10,7 @@ SYSTEMD_DIR="/etc/systemd/system"
 ARGUS_ENV_DIR="/etc/argus"
 SYSTEM_ENV_FILE="${ARGUS_ENV_DIR}/argus.env"
 ENV_FILE="${SCRIPT_DIR}/argus.env"
-ARGUS_STATE_DIR="${ARGUS_STATE_DIR:-$HOME/.openclaw/workspace/state/argus}"
+ARGUS_STATE_DIR="${ARGUS_STATE_DIR:-$HOME/athena/state/argus}"
 
 echo "===== Argus Installation ====="
 echo ""

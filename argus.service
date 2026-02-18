@@ -30,7 +30,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=%h/.openclaw/workspace/state %h/argus/logs
+ReadWritePaths=%h/athena/state %h/argus/logs
 
 [Install]
 WantedBy=multi-user.target

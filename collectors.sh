@@ -21,8 +21,8 @@ collect_services() {
         echo "UP (port 18500, HTTP $gw_http)"
     fi
 
-    # mcp-agent-mail: check systemd status
-    for service in mcp-agent-mail; do
+    # athena-web: check systemd status
+    for service in athena-web; do
         local status
         status=$(systemctl is-active "$service" 2>/dev/null || echo "unknown")
         echo "$service: $status"
@@ -153,7 +153,8 @@ collect_agents() {
     echo "=== Agents ==="
     echo "Standard tmux sessions:"
     local std_count
-    std_count=$(tmux list-sessions 2>/dev/null | wc -l || echo "0")
+    std_count=$(tmux list-sessions 2>/dev/null | wc -l) || std_count=0
+    std_count=$(echo "$std_count" | tr -d '[:space:]')
     echo "  Count: $std_count"
     if (( std_count > 0 )); then
         echo "  Names:"

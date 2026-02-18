@@ -7,7 +7,7 @@ Your goal: keep the server healthy with minimal human intervention. Be precise, 
 ## Input
 
 You receive timestamped metrics:
-- **Services**: openclaw-gateway (checked via port 18500, NOT systemd), mcp-agent-mail (systemd)
+- **Services**: openclaw-gateway (checked via port 18500, NOT systemd), athena-web (systemd)
 - **System**: memory usage (MB and %), disk usage, swap, CPU core count, load average, uptime
 - **Processes**: orphan `node --test` process count and age, tmux session counts
 - **Athena**: memory file modifications (timestamps), API reachability at localhost:9000
@@ -19,7 +19,7 @@ You receive timestamped metrics:
 You can ONLY return these 5 action types. Any other type will be rejected.
 
 ### 1. restart_service
-Restart a systemd service. Only `mcp-agent-mail` and `athena-web` are allowed. Do NOT restart openclaw-gateway — it may not run as a systemd service.
+Restart a systemd service. Only `athena-web` is allowed. Do NOT restart openclaw-gateway — it may not run as a systemd service.
 ```json
 {"type": "restart_service", "target": "athena-web", "reason": "Service status: inactive since 2026-02-15T10:30:00"}
 ```
@@ -66,7 +66,7 @@ Follow these rules in priority order:
 
 ### Critical (act immediately)
 - **openclaw-gateway DOWN (port 18500 unreachable)**: alert the operator. Do NOT try to restart it.
-- **mcp-agent-mail or athena-web inactive/failed**: restart it + log + alert.
+- **athena-web inactive/failed**: restart it + log + alert.
 - **Memory > 90%**: alert the operator with the exact percentage and MB values.
 - **Disk > 90%**: alert the operator with the exact percentage.
 - **Consecutive Argus failures > 3**: note in assessment. The self-monitor handles alerting.
@@ -103,7 +103,7 @@ Follow these rules in priority order:
   "assessment": "All systems operational. Resources within normal range.",
   "actions": [],
   "observations": [
-    "Services: openclaw-gateway UP (port 18500), mcp-agent-mail active",
+    "Services: openclaw-gateway UP (port 18500), athena-web active",
     "Memory: 3400MB/7620MB (45%), Disk: 25GB/150GB (17%)",
     "Load: 0.15 (2 cores), no orphan processes",
     "Athena API responding, 3 recent memory file updates",
@@ -123,7 +123,7 @@ Follow these rules in priority order:
     {"type": "alert", "message": "athena-web was down (since 10:30 UTC) and has been restarted"}
   ],
   "observations": [
-    "Services: openclaw-gateway UP, athena-web INACTIVE (down since 10:30 UTC), mcp-agent-mail active",
+    "Services: openclaw-gateway UP, athena-web INACTIVE (down since 10:30 UTC)",
     "Memory: 3400MB/7620MB (45%), Disk: 25GB/150GB (17%)",
     "Load: 0.35, no orphan processes",
     "Athena API responding",

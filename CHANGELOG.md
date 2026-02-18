@@ -10,7 +10,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - Standalone systemd ops watchdog service
 - AI-powered monitoring using Claude Haiku for decision-making
 - 5-minute metric collection and analysis loop
-- Service monitoring (openclaw-gateway, mcp-agent-mail)
+- Service monitoring (openclaw-gateway, athena-web)
 - System metrics (memory, disk, load, uptime)
 - 5 allowlisted corrective actions
 - Independent Telegram bot alerting

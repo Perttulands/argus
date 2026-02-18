@@ -6,7 +6,7 @@ set -euo pipefail
 # Security model: The LLM can only trigger these 5 actions.
 # Each action validates its inputs before execution.
 
-ALLOWED_SERVICES=("mcp-agent-mail" "athena-web")
+ALLOWED_SERVICES=("athena-web")
 TELEGRAM_TIMEOUT=10   # seconds for Telegram API calls
 TELEGRAM_MAX_RETRIES=2 # retry failed Telegram sends
 
@@ -162,7 +162,7 @@ action_alert() {
 
 action_log() {
     local observation="$1"
-    local log_file="${ARGUS_OBSERVATIONS_FILE:-$HOME/.openclaw/workspace/state/argus/observations.md}"
+    local log_file="${ARGUS_OBSERVATIONS_FILE:-$HOME/athena/state/argus/observations.md}"
     local log_dir
     log_dir=$(dirname "$log_file")
 
@@ -193,17 +193,17 @@ action_log() {
         repeat_count=$(grep -cF "$key_phrase" "$log_file" 2>/dev/null || echo 0)
     fi
 
-    local problem_script="$HOME/.openclaw/workspace/scripts/problem-detected.sh"
+    local problem_script="$HOME/athena/scripts/problem-detected.sh"
     if (( repeat_count >= 3 )) && [[ -x "$problem_script" ]]; then
         # Repeated problem — create a bead (only if no bead exists for this issue)
-        local problems_file="$HOME/.openclaw/workspace/state/problems.jsonl"
+        local problems_file="$HOME/athena/state/problems.jsonl"
         if ! grep -qF "$key_phrase" "$problems_file" 2>/dev/null; then
             "$problem_script" "argus" "$observation" "Repeated ${repeat_count}x" \
                 >/dev/null 2>&1 || true
         fi
     else
         # First occurrence — just wake Athena
-        local wake_script="$HOME/.openclaw/workspace/scripts/wake-gateway.sh"
+        local wake_script="$HOME/athena/scripts/wake-gateway.sh"
         if [[ -x "$wake_script" ]]; then
             "$wake_script" "Argus observation: $observation" \
                 >/dev/null 2>&1 || true
@@ -212,7 +212,7 @@ action_log() {
 }
 
 # Auto-kill orphan node --test processes after repeated detection
-ORPHAN_STATE_FILE="${ARGUS_ORPHAN_STATE:-$HOME/.openclaw/workspace/state/argus-orphans.json}"
+ORPHAN_STATE_FILE="${ARGUS_ORPHAN_STATE:-$HOME/athena/state/argus-orphans.json}"
 ORPHAN_KILL_THRESHOLD=3
 
 action_check_and_kill_orphan_tests() {
