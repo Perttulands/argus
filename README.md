@@ -1,4 +1,4 @@
-# 👁️ Argus — The The Faithful Hound
+# 👁️ Argus — The Faithful Hound
 
 ![Banner](banner.jpg)
 
