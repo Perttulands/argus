@@ -1,17 +1,16 @@
-# 👁️ Argus — The Faithful Hound
+# 👁️ Argus — The Hound That Never Sleeps
 
 ![Banner](banner.jpg)
 
-
-_The ops watchdog that never blinks._
+_One red eye. Always open. Your server's last line of defense._
 
 ---
 
-In the Odyssey, Argus was Odysseus's dog — the one who waited twenty years and was the only one who recognised his master when he came home. Loyalty that outlasts everything. Our Argus has that same devotion: it watches your server, decides what's wrong, and fixes it before you notice.
+There's a dog in the Agora with a spiked bronze collar and scars across his muzzle. One eye is normal. The other glows red — a scanner that sweeps the server every five minutes, cataloguing everything that breathes. A broken chain drags behind him. Nobody put Argus on a leash. Nobody could.
 
-Argus is a standalone systemd service that monitors server health every 5 minutes. It collects metrics, feeds them to Claude Haiku for reasoning, and executes a narrow set of allowlisted actions. It can restart services, kill runaway processes, send alerts, and file problem reports — but it can't do anything else. That constraint is the whole point.
+In the Odyssey, Argus was the dog who waited twenty years for Odysseus and was the only one who recognised his master when he came home. That kind of loyalty doesn't need commands. Our Argus has the same devotion, except instead of waiting on a porch, he patrols a Linux server, decides what's wrong, and fixes it before you notice. He's killed more orphan processes than he can count — the tally marks on his collar prove it.
 
-You don't want your AI watchdog to be creative. You want it to be correct, boring, and relentless.
+You don't want your AI watchdog to be creative. You want it to be correct, boring, and relentless. Argus is all three.
 
 ## How It Works
 
@@ -30,7 +29,7 @@ Argus collects system metrics (CPU, memory, disk, swap, processes, service healt
 | `alert` | Sends a Telegram notification | Hostname auto-prepended, retry on failure |
 | `log` | Records an observation | Auto-escalates after 3+ consecutive repeats |
 
-Additionally, orphan `node --test` processes are auto-killed **deterministically** (no LLM involved) after 3 consecutive detections. Some things don't need AI. They need a cron job with opinions.
+Orphan `node --test` processes are auto-killed **deterministically** (no LLM involved) after 3 consecutive detections. Some things don't need AI. They need a cron job with opinions.
 
 ## Components
 
@@ -39,7 +38,7 @@ Additionally, orphan `node --test` processes are auto-killed **deterministically
 | `argus.sh` | Main loop — metric collection, LLM calls, action execution, log rotation |
 | `collectors.sh` | Metric collectors — services, system stats, processes, agent sessions |
 | `actions.sh` | The 5 allowlisted action executors with input validation |
-| `prompt.md` | System prompt — Argus's brain. Edit this to change what it cares about |
+| `prompt.md` | System prompt — Argus's brain. Edit this to change what he cares about |
 | `argus.service` | Systemd unit with resource limits and security hardening |
 | `install.sh` | Idempotent installer |
 
@@ -64,10 +63,10 @@ source argus.env && ./argus.sh --once
 # Service management
 sudo systemctl start|stop|restart|status argus
 
-# Watch it work
+# Watch him work
 tail -f ~/argus/logs/argus.log
 
-# See its last decision
+# See his last decision
 cat ~/argus/logs/last_response.json | jq
 
 # Check cycle health
@@ -84,7 +83,7 @@ cat ~/argus/logs/cycle_state.json | jq
 
 ## Adapting for Your Server
 
-Argus is opinionated about what it monitors, but those opinions are easy to change:
+Argus is opinionated about what he monitors, but those opinions are easy to change:
 
 1. Edit service names in `collectors.sh`
 2. Update `ALLOWED_SERVICES` in `actions.sh`
@@ -113,7 +112,7 @@ No arbitrary command execution. Every action is validated:
 
 ## For Agents
 
-### Install
+This repo includes `AGENTS.md`. Your agent knows what to do.
 
 ```bash
 cd ~/argus
@@ -126,32 +125,13 @@ sudo systemctl enable --now argus
 
 Dependencies: `curl`, `jq`, `bc`, systemd. That's it. No compiler, no runtime, no existential dread.
 
-### What This Is
+## 🏛️ Part of the Agora
 
-Argus is the ops watchdog that monitors server health every 5 minutes, feeds metrics to Claude Haiku for reasoning, and executes a narrow set of allowlisted actions (restart services, kill runaway processes, send alerts). In the Agora, Argus is the thing that keeps the lights on while you're busy writing code — it catches disk pressure, zombie processes, and service crashes before they cascade into something you'll actually notice. If Argus is down, nobody's watching the gates.
+Argus was forged in **[Athena's Agora](https://github.com/Perttulands/athena-workspace)** — an autonomous coding system where AI agents build software under the watch of Greek gods and cyberpunk engineering.
 
-### Runtime Usage
+There are others in the Agora. [Hermes](https://github.com/Perttulands/relay) carries the messages. [Truthsayer](https://github.com/Perttulands/truthsayer) enforces the law. [Oathkeeper](https://github.com/Perttulands/oathkeeper) checks the receipts. Argus keeps the lights on while they work.
 
-```bash
-# Run a single diagnostic cycle without the service
-source ~/argus/argus.env && ~/argus/argus.sh --once
-
-# Check service status
-sudo systemctl status argus
-
-# Tail the live log
-tail -f ~/argus/logs/argus.log
-
-# See the last LLM decision
-cat ~/argus/logs/last_response.json | jq
-
-# Check cycle health (consecutive failures, last action)
-cat ~/argus/logs/cycle_state.json | jq
-```
-
-## Part of [Athena's Agora](https://github.com/Perttulands/athena-workspace)
-
-Argus is one of several tools in the Agora — an autonomous coding and operations system built around AI agents. See the [mythology](https://github.com/Perttulands/athena-workspace/blob/main/mythology.md) for the full story.
+Read the [mythology](https://github.com/Perttulands/athena-workspace/blob/main/mythology.md) if you want the full story.
 
 ## License
 
