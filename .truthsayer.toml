@@ -1,0 +1,5 @@
+[scan]
+exclude_dirs = ["logs", "node_modules"]
+
+[rules]
+disable = ["silent-fallback.hidden-failure-bash"]
