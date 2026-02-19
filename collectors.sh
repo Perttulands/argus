@@ -21,17 +21,7 @@ collect_services() {
         echo "UP (port 18500, HTTP $gw_http)"
     fi
 
-    # athena-web: check systemd status
-    for service in athena-web; do
-        local status
-        status=$(systemctl is-active "$service" 2>/dev/null || echo "unknown")
-        echo "$service: $status"
-        if [[ "$status" == "inactive" || "$status" == "failed" ]]; then
-            local since
-            since=$(systemctl show "$service" --property=InactiveEnterTimestamp --value 2>/dev/null || echo "unknown")
-            echo "  Down since: $since"
-        fi
-    done
+    # athena-web removed from monitoring (2026-02-19)
 }
 
 collect_system() {
@@ -137,16 +127,7 @@ collect_athena() {
     else
         echo "Memory directory not found: $memory_dir"
     fi
-    echo "Athena API (localhost:9000):"
-    local api_result http_code
-    api_result=$(curl -s -o /dev/null -w '%{http_code}' -m 5 http://localhost:9000 2>/dev/null) || api_result="failed"
-    if [[ "$api_result" == "200" ]]; then
-        echo "  Status: reachable (HTTP $api_result)"
-    elif [[ "$api_result" == "failed" ]]; then
-        echo "  Status: unreachable (connection failed)"
-    else
-        echo "  Status: unexpected (HTTP $api_result)"
-    fi
+    # Athena API (port 9000) removed from monitoring (2026-02-19)
 }
 
 collect_agents() {

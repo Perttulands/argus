@@ -6,7 +6,7 @@ set -euo pipefail
 # Security model: The LLM can only trigger these 5 actions.
 # Each action validates its inputs before execution.
 
-ALLOWED_SERVICES=("athena-web")
+ALLOWED_SERVICES=()
 TELEGRAM_TIMEOUT=10   # seconds for Telegram API calls
 TELEGRAM_MAX_RETRIES=2 # retry failed Telegram sends
 

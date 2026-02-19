@@ -4,6 +4,17 @@ All notable changes to Argus.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
+## [0.2.0] - 2026-02-19
+
+### Removed
+- athena-web dropped from monitoring round (service, port 9000 check, restart action)
+- Athena API reachability check removed from collectors
+
+### Changed
+- `prompt.md` updated to reflect reduced service scope
+- `actions.sh` cleared allowed services list
+- `collectors.sh` removed athena-web systemd and port 9000 checks
+
 ## [0.1.0] - 2026-02-13
 
 ### Added
