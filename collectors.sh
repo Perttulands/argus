@@ -11,14 +11,14 @@ set -euo pipefail
 collect_services() {
     echo "=== Services ==="
 
-    # openclaw-gateway: check port 18500 (may run outside systemd)
+    # openclaw-gateway: check ports 18505 (Athena) and 18789 (Mercury) (may run outside systemd)
     echo -n "openclaw-gateway: "
     local gw_http
-    gw_http=$(curl -s -o /dev/null -w '%{http_code}' -m 5 http://localhost:18500/ 2>/dev/null) || gw_http="failed"
+    gw_http=$(curl -s -o /dev/null -w '%{http_code}' -m 5 http://localhost:18505/ 2>/dev/null) || gw_http="failed"
     if [[ "$gw_http" == "000" || "$gw_http" == "failed" ]]; then
-        echo "DOWN (port 18500 unreachable)"
+        echo "DOWN (port 18505 unreachable)"
     else
-        echo "UP (port 18500, HTTP $gw_http)"
+        echo "UP (port 18505, HTTP $gw_http)"
     fi
 
     # athena-web removed from monitoring (2026-02-19)
@@ -120,7 +120,7 @@ collect_processes() {
 
 collect_athena() {
     echo "=== Athena ==="
-    local memory_dir="${ARGUS_MEMORY_DIR:-$HOME/athena/memory}"
+    local memory_dir="${ARGUS_MEMORY_DIR:-$HOME/.openclaw-athena/memory}"
     if [[ -d "$memory_dir" ]]; then
         echo "Memory file modifications (last 5):"
         find "$memory_dir" -name "*.md" -type f -printf "%T+ %p\n" 2>/dev/null | sort -r | head -n5 || echo "  No .md files found"
