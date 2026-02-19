@@ -4,6 +4,11 @@ All notable changes to Argus.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
+## [0.2.1] - 2026-02-19
+
+### Added
+- "For Agents" section in README: install, what-this-is, and runtime usage for agent consumers
+
 ## [0.2.0] - 2026-02-19
 
 ### Removed

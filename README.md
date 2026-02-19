@@ -111,6 +111,44 @@ No arbitrary command execution. Every action is validated:
 - Telegram payloads built with `jq`, not string interpolation
 - systemd: `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`
 
+## For Agents
+
+### Install
+
+```bash
+cd ~/argus
+cp argus.env.example argus.env
+# Add ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID to argus.env
+chmod +x install.sh
+./install.sh
+sudo systemctl enable --now argus
+```
+
+Dependencies: `curl`, `jq`, `bc`, systemd. That's it. No compiler, no runtime, no existential dread.
+
+### What This Is
+
+Argus is the ops watchdog that monitors server health every 5 minutes, feeds metrics to Claude Haiku for reasoning, and executes a narrow set of allowlisted actions (restart services, kill runaway processes, send alerts). In the Agora, Argus is the thing that keeps the lights on while you're busy writing code — it catches disk pressure, zombie processes, and service crashes before they cascade into something you'll actually notice. If Argus is down, nobody's watching the gates.
+
+### Runtime Usage
+
+```bash
+# Run a single diagnostic cycle without the service
+source ~/argus/argus.env && ~/argus/argus.sh --once
+
+# Check service status
+sudo systemctl status argus
+
+# Tail the live log
+tail -f ~/argus/logs/argus.log
+
+# See the last LLM decision
+cat ~/argus/logs/last_response.json | jq
+
+# Check cycle health (consecutive failures, last action)
+cat ~/argus/logs/cycle_state.json | jq
+```
+
 ## Part of [Athena's Agora](https://github.com/Perttulands/athena-workspace)
 
 Argus is one of several tools in the Agora — an autonomous coding and operations system built around AI agents. See the [mythology](https://github.com/Perttulands/athena-workspace/blob/main/mythology.md) for the full story.
