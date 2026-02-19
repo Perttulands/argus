@@ -1,5 +1,2 @@
 [scan]
-exclude_dirs = ["logs", "node_modules"]
-
-[rules]
-disable = ["silent-fallback.hidden-failure-bash"]
+exclude_dirs = ["vendor", "node_modules", "testdata", ".beads"]
