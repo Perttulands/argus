@@ -19,6 +19,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - ARG-005 (2026-02-20): System collector now reports top memory hog context at high memory pressure and includes cgroup memory context when available.
 - ARG-006 (2026-02-20): Added persistent per-service restart backoff state with enforced retry delays and loop cooldown (`state/restart-backoff.json`).
 - ARG-006 (2026-02-20): Restart loops now escalate after repeated failures with cooldown markers in problem records and regression coverage for backoff timing/cooldown behavior.
+- ARG-007 (2026-02-20): Added pattern analysis tooling (`scripts/pattern-analysis.sh`) that scans `state/problems.jsonl` and reports recurring restart spikes, disk trends, memory-hog recurrence, and time correlations.
+- ARG-007 (2026-02-20): Added regression coverage for pattern analysis output generation and documented pattern-analysis workflows in README.
 
 ## [2026-02-20]
 

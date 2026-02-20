@@ -160,6 +160,12 @@ When memory is critical, Argus enriches alerts and problem records with:
 - attempt 3: wait `ARGUS_RESTART_BACKOFF_THIRD_DELAY` (default 300s)
 - attempt 4+: mark restart loop, create/attach bead, and cooldown for `ARGUS_RESTART_COOLDOWN_SECONDS` (default 3600s)
 
+## Pattern Analysis
+
+Argus includes offline pattern tooling over `state/problems.jsonl`:
+
+- `scripts/pattern-analysis.sh`: generates `state/pattern-analysis.json` with recurring restart spikes, disk-pressure trends, memory-hog recurrence, and time-correlation signals.
+
 ## Relay Problem Reports (Optional)
 
 When Relay is available, Argus also publishes structured problem events to Athena:
