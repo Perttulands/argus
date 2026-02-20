@@ -11,6 +11,8 @@ export ARGUS_PROBLEMS_FILE="$ARGUS_STATE_DIR/problems.jsonl"
 export ARGUS_OBSERVATIONS_FILE="$TEST_ROOT/observations.md"
 export ARGUS_RELAY_ENABLED=false
 export ARGUS_RELAY_FALLBACK_FILE="$TEST_ROOT/relay-fallback.jsonl"
+export ARGUS_BEADS_WORKDIR="$TEST_ROOT/workspace"
+mkdir -p "$ARGUS_BEADS_WORKDIR"
 
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/actions.sh"

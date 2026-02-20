@@ -117,6 +117,20 @@ Quick validation:
 jq -c . state/problems.jsonl >/dev/null
 ```
 
+## Auto Bead Creation
+
+Argus creates or reuses beads when an issue needs human attention:
+
+- Action failed (`action_result: failure`)
+- Same problem recurs at least 3 times in 24h
+- Problem has no automatic remediation path (for example, `alert`/`log`)
+
+Behavior:
+
+- Command used: `bd create --title "[argus] <type>: <description>" ...`
+- Open-bead dedup key: `Problem key: <type>:<description_sha256_16>`
+- If `bd` is unavailable, Argus skips bead creation and continues monitoring.
+
 ## Relay Problem Reports (Optional)
 
 When Relay is available, Argus also publishes structured problem events to Athena:

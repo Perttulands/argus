@@ -9,6 +9,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 ### Added
 - ARG-001 (2026-02-20): Added structured problem registry logging to `state/problems.jsonl` for all LLM-triggered actions and deterministic orphan-process handling, including severity/type/action metadata for reliable diagnostics and `jq` querying.
 - ARG-001 (2026-02-20): Documented the problem registry schema and validation command in `README.md`.
+- ARG-002 (2026-02-20): Added automatic bead creation workflow in `actions.sh` with trigger conditions (failed action, repeated issue, no-auto-fix), bead deduplication by problem key, and `bead_id` persistence in problem records.
+- ARG-002 (2026-02-20): Documented Argus bead creation behavior and added a regression test with mocked `bd` interactions.
 
 ## [2026-02-20]
 

@@ -18,6 +18,10 @@ ARGUS_RELAY_FALLBACK_FILE="${ARGUS_RELAY_FALLBACK_FILE:-$HOME/athena/state/argus
 ACTIONS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARGUS_STATE_DIR="${ARGUS_STATE_DIR:-${SCRIPT_DIR:-$ACTIONS_DIR}/state}"
 ARGUS_PROBLEMS_FILE="${ARGUS_PROBLEMS_FILE:-$ARGUS_STATE_DIR/problems.jsonl}"
+ARGUS_BEADS_WORKDIR="${ARGUS_BEADS_WORKDIR:-$HOME/athena/workspace}"
+ARGUS_BEAD_PRIORITY="${ARGUS_BEAD_PRIORITY:-2}"
+ARGUS_BEAD_REPEAT_THRESHOLD="${ARGUS_BEAD_REPEAT_THRESHOLD:-3}"
+ARGUS_BEAD_REPEAT_WINDOW_SECONDS="${ARGUS_BEAD_REPEAT_WINDOW_SECONDS:-86400}"
 
 normalize_problem_type() {
     local value="${1:-process}"
@@ -95,6 +99,112 @@ log_problem() {
             bead_id: (if ($bead_id == "null" or $bead_id == "") then null else $bead_id end),
             host: $host
         }' >> "$ARGUS_PROBLEMS_FILE"
+}
+
+generate_problem_key() {
+    local problem_type="${1:-process}"
+    local description="${2:-}"
+    local hash
+    hash=$(printf '%s' "$description" | sha256sum | awk '{print $1}' | cut -c1-16)
+    printf '%s:%s\n' "$(normalize_problem_type "$problem_type")" "$hash"
+}
+
+problem_occurrences_in_window() {
+    local problem_type="${1:-process}"
+    local description="${2:-}"
+    if [[ ! -f "$ARGUS_PROBLEMS_FILE" ]]; then
+        echo 0
+        return 0
+    fi
+
+    local now cutoff count
+    now=$(date -u +%s)
+    cutoff=$((now - ARGUS_BEAD_REPEAT_WINDOW_SECONDS))
+    count=$(jq -s \
+        --arg problem_type "$problem_type" \
+        --arg description "$description" \
+        --argjson cutoff "$cutoff" \
+        '[.[] | select(.type == $problem_type and .description == $description)
+        | (.ts | fromdateiso8601? // 0)
+        | select(. >= $cutoff)] | length' "$ARGUS_PROBLEMS_FILE" 2>/dev/null || echo 0) # REASON: malformed registry rows should degrade to zero matches.
+
+    if [[ ! "$count" =~ ^[0-9]+$ ]]; then
+        count=0
+    fi
+    echo "$count"
+}
+
+action_has_automatic_remediation() {
+    local action_type="${1:-}"
+    case "$action_type" in
+        restart_service|kill_pid|kill_tmux|clean_disk) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+find_open_bead_for_problem_key() {
+    local problem_key="${1:-}"
+    [[ -n "$problem_key" ]] || return 1
+
+    if ! command -v bd >/dev/null 2>&1; then # REASON: bead creation must be a no-op when bd is not installed.
+        return 1
+    fi
+
+    local open_json
+    open_json=$(cd "$ARGUS_BEADS_WORKDIR" && bd list --status open --json 2>/dev/null || echo "[]") # REASON: transient bd failures should not break monitoring.
+    jq -r --arg marker "Problem key: ${problem_key}" \
+        '.[] | select((.description // "") | contains($marker)) | .id' <<< "$open_json" | head -n1
+}
+
+create_bead() {
+    local problem_type="${1:-process}"
+    local description="${2:-No description provided}"
+    local severity="${3:-info}"
+    local action_taken="${4:-none}"
+    local action_result="${5:-unknown}"
+    local problem_key="${6:-}"
+    local seen_count="${7:-1}"
+
+    if ! command -v bd >/dev/null 2>&1; then # REASON: bd integration is optional and should degrade gracefully.
+        return 0
+    fi
+
+    local existing_id
+    existing_id=$(find_open_bead_for_problem_key "$problem_key" || true) # REASON: lookup failures should fall back to attempting creation.
+    if [[ -n "$existing_id" ]]; then
+        echo "$existing_id"
+        return 0
+    fi
+
+    local host title body bead_id
+    host=$(hostname -f 2>/dev/null || hostname) # REASON: FQDN may be unavailable; fallback to short hostname.
+    title="[argus] ${problem_type}: ${description}"
+    body=$(cat <<EOF
+Argus detected an issue that needs human attention.
+
+Type: ${problem_type}
+Severity: ${severity}
+Description: ${description}
+Action taken: ${action_taken}
+Action result: ${action_result}
+Occurrences in window: ${seen_count}
+Host: ${host}
+
+Problem key: ${problem_key}
+EOF
+)
+
+    bead_id=$(cd "$ARGUS_BEADS_WORKDIR" && bd create \
+        --title "$title" \
+        --description "$body" \
+        --priority "$ARGUS_BEAD_PRIORITY" \
+        --labels argus \
+        --silent 2>/dev/null || true) # REASON: creation failures should not fail Argus monitoring cycles.
+
+    bead_id=$(echo "$bead_id" | tr -d '[:space:]')
+    if [[ "$bead_id" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+        echo "$bead_id"
+    fi
 }
 
 relay_enabled_argus() {
@@ -458,6 +568,11 @@ execute_action() {
     local action_taken="${action_type}:${target}"
     local action_result="success"
     local action_failed=false
+    local problem_key
+    local recurrence_count=0
+    local seen_count=1
+    local should_create_bead=false
+    local bead_id=""
 
     case "$action_type" in
         restart_service)
@@ -522,7 +637,27 @@ execute_action() {
             ;;
     esac
 
-    log_problem "$severity" "$problem_type" "$description" "$action_taken" "$action_result" "null" || true # REASON: action execution result should return even if registry append fails.
+    problem_key=$(generate_problem_key "$problem_type" "$description")
+    recurrence_count=$(problem_occurrences_in_window "$problem_type" "$description")
+    if [[ "$recurrence_count" =~ ^[0-9]+$ ]]; then
+        seen_count=$((recurrence_count + 1))
+    fi
+
+    if [[ "$action_result" == "failure" ]]; then
+        should_create_bead=true
+    fi
+    if (( seen_count >= ARGUS_BEAD_REPEAT_THRESHOLD )); then
+        should_create_bead=true
+    fi
+    if ! action_has_automatic_remediation "$action_type"; then
+        should_create_bead=true
+    fi
+
+    if [[ "$should_create_bead" == "true" ]]; then
+        bead_id=$(create_bead "$problem_type" "$description" "$severity" "$action_taken" "$action_result" "$problem_key" "$seen_count")
+    fi
+
+    log_problem "$severity" "$problem_type" "$description" "$action_taken" "$action_result" "$bead_id" || true # REASON: action execution result should return even if registry append fails.
 
     if [[ "$action_failed" == "true" ]]; then
         return 1
