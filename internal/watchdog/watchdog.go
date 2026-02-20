@@ -112,7 +112,7 @@ func New(cfg Config) (*Watchdog, error) {
 	}
 
 	if err := w.loadBreadcrumb(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load breadcrumb: %w", err)
 	}
 	return w, nil
 }

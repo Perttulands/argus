@@ -24,7 +24,7 @@ source "${SCRIPT_DIR}/actions.sh"
 mkdir -p "$LOG_DIR"
 
 # Cache hostname once at startup
-HOSTNAME_CACHED=$(hostname -f 2>/dev/null || hostname)
+HOSTNAME_CACHED=$(hostname -f 2>/dev/null || hostname) # REASON: FQDN may be unavailable; fallback to short hostname.
 
 log() {
     local level="$1"
@@ -41,7 +41,7 @@ rotate_log() {
         return 0
     fi
     local size
-    size=$(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
+    size=$(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0) # REASON: file may not exist yet; 0 means no rotation needed.
     if (( size > MAX_LOG_SIZE )); then
         local i
         # Remove oldest, shift others down
@@ -66,17 +66,23 @@ call_llm() {
     local full_prompt
     full_prompt=$(printf '%s\n\n---\n\n%s\n\nRespond with ONLY valid JSON. No markdown, no explanation.' "$system_prompt" "$user_message")
 
-    local response exit_code
-    response=$(timeout "$LLM_TIMEOUT" bash -c 'echo "$1" | claude -p --model haiku --output-format text 2>/dev/null' _ "$full_prompt") && exit_code=0 || exit_code=$?
+    local response exit_code stderr_file
+    stderr_file=$(mktemp)
+    response=$(timeout "$LLM_TIMEOUT" bash -c 'echo "$1" | claude -p --model haiku --output-format text 2>"$2"' _ "$full_prompt" "$stderr_file") && exit_code=0 || exit_code=$?
 
     if [[ $exit_code -ne 0 ]]; then
+        local stderr_output
+        stderr_output=$(cat "$stderr_file" 2>/dev/null; rm -f "$stderr_file") # REASON: temp file may already be cleaned up
         if [[ $exit_code -eq 124 ]]; then
             log ERROR "claude -p timed out after ${LLM_TIMEOUT}s"
         else
             log ERROR "claude -p call failed (exit code: $exit_code)"
         fi
+        [[ -n "$stderr_output" ]] && log ERROR "claude -p stderr: $stderr_output"
         return 1
     fi
+
+    rm -f "$stderr_file"
 
     if [[ -z "$response" ]]; then
         log ERROR "Empty response from claude -p"
@@ -93,7 +99,7 @@ process_llm_response() {
     response=$(echo "$response" | sed '/^```\(json\)\{0,1\}$/d')
 
     # Validate JSON
-    if ! echo "$response" | jq empty 2>/dev/null; then
+    if ! echo "$response" | jq empty 2>/dev/null; then # REASON: jq parse errors are less useful than our raw response log below.
         log ERROR "LLM response is not valid JSON"
         log ERROR "Raw response (first 500 chars): ${response:0:500}"
         return 1
@@ -106,7 +112,7 @@ process_llm_response() {
 
     # Extract and log observations
     local obs_output
-    obs_output=$(echo "$response" | jq -r 'if .observations then .observations[] else empty end' 2>/dev/null) || true
+    obs_output=$(echo "$response" | jq -r 'if .observations then .observations[] else empty end' 2>/dev/null) || true # REASON: response already validated; empty/missing observations is normal.
     if [[ -n "$obs_output" ]]; then
         log INFO "Observations:"
         while IFS= read -r obs; do
@@ -116,7 +122,7 @@ process_llm_response() {
 
     # Execute actions
     local actions_output
-    actions_output=$(echo "$response" | jq -c 'if .actions then .actions[] else empty end' 2>/dev/null) || true
+    actions_output=$(echo "$response" | jq -c 'if .actions then .actions[] else empty end' 2>/dev/null) || true # REASON: response already validated; empty/missing actions is normal.
 
     if [[ -z "$actions_output" ]]; then
         log INFO "No actions to execute"
@@ -152,7 +158,7 @@ record_cycle_state() {
 
     local prev_failures=0
     if [[ -f "$CYCLE_STATE_FILE" ]]; then
-        prev_failures=$(jq -r '.consecutive_failures // 0' "$CYCLE_STATE_FILE" 2>/dev/null || echo 0)
+        prev_failures=$(jq -r '.consecutive_failures // 0' "$CYCLE_STATE_FILE" 2>/dev/null || echo 0) # REASON: state file may be corrupted or from older version; 0 is safe default.
     fi
 
     local consecutive_failures=0
@@ -178,10 +184,10 @@ check_previous_cycle() {
     fi
 
     local prev_status prev_detail prev_ts prev_failures
-    prev_status=$(jq -r '.status // "unknown"' "$CYCLE_STATE_FILE" 2>/dev/null || echo "unknown")
-    prev_detail=$(jq -r '.detail // ""' "$CYCLE_STATE_FILE" 2>/dev/null || echo "")
-    prev_ts=$(jq -r '.timestamp // ""' "$CYCLE_STATE_FILE" 2>/dev/null || echo "")
-    prev_failures=$(jq -r '.consecutive_failures // 0' "$CYCLE_STATE_FILE" 2>/dev/null || echo 0)
+    prev_status=$(jq -r '.status // "unknown"' "$CYCLE_STATE_FILE" 2>/dev/null || echo "unknown") # REASON: state file may be corrupted or from older format; safe defaults prevent crash.
+    prev_detail=$(jq -r '.detail // ""' "$CYCLE_STATE_FILE" 2>/dev/null || echo "") # REASON: state file may be corrupted or from older format; safe defaults prevent crash.
+    prev_ts=$(jq -r '.timestamp // ""' "$CYCLE_STATE_FILE" 2>/dev/null || echo "") # REASON: state file may be corrupted or from older format; safe defaults prevent crash.
+    prev_failures=$(jq -r '.consecutive_failures // 0' "$CYCLE_STATE_FILE" 2>/dev/null || echo 0) # REASON: state file may be corrupted or from older format; safe defaults prevent crash.
 
     if [[ "$prev_status" == "failed" ]]; then
         echo "WARNING: Previous cycle FAILED at ${prev_ts}: ${prev_detail}"
@@ -191,7 +197,7 @@ check_previous_cycle() {
         if (( prev_failures >= 3 )) && (( prev_failures % 3 == 0 )); then
             log ERROR "SELF-MONITOR: ${prev_failures} consecutive cycle failures"
             if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]] && [[ -n "${TELEGRAM_CHAT_ID:-}" ]]; then
-                action_alert "[${HOSTNAME_CACHED}] Argus self-monitor: ${prev_failures} consecutive cycle failures. Last error: ${prev_detail}" || true
+                action_alert "[${HOSTNAME_CACHED}] Argus self-monitor: ${prev_failures} consecutive cycle failures. Last error: ${prev_detail}" || true # REASON: alert delivery is best-effort; must not crash monitor loop.
             fi
         fi
     else
@@ -202,11 +208,11 @@ check_previous_cycle() {
 # Check available disk space — if critically low, skip LLM call to avoid making it worse
 check_disk_space() {
     local avail_kb
-    avail_kb=$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ') || return 0
+    avail_kb=$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ') || return 0 # REASON: df may emit stderr in containers; inability to check disk should not halt monitor.
     if (( avail_kb < 102400 )); then  # < 100MB available
         log ERROR "CRITICAL: Disk space critically low (${avail_kb}KB available). Sending emergency alert."
         if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]] && [[ -n "${TELEGRAM_CHAT_ID:-}" ]]; then
-            action_alert "[${HOSTNAME_CACHED}] CRITICAL: Disk space < 100MB (${avail_kb}KB). Argus skipping LLM call to conserve space." || true
+            action_alert "[${HOSTNAME_CACHED}] CRITICAL: Disk space < 100MB (${avail_kb}KB). Argus skipping LLM call to conserve space." || true # REASON: alert delivery is best-effort; must not crash monitor loop.
         fi
         return 1
     fi
@@ -310,7 +316,7 @@ main() {
                 log ERROR "Cycle failed, will retry in ${SLEEP_INTERVAL}s"
             fi
             sleep "$SLEEP_INTERVAL" &
-            wait $! 2>/dev/null || break  # wait is interruptible by signals
+            wait $! 2>/dev/null || break  # REASON: wait on backgrounded sleep emits stderr when interrupted by signal; this is the standard interruptible-sleep pattern.
         done
     fi
 }

@@ -11,6 +11,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ### Changed
 - README: further mythology-forward rewrite — spicy, standalone voice (f042a84, e5f62eb)
+- Improved `claude -p` failure diagnostics in `argus.sh` by capturing and logging stderr output on non-zero exits.
+- Wrapped watchdog breadcrumb load errors with context (`load breadcrumb: ...`) in `internal/watchdog/watchdog.go`.
 
 ### Removed
 - `.truthsayer.toml` reverted — rule suppression removed, judge handles context directly (eed4559)

@@ -100,7 +100,7 @@ else
 fi
 
 echo ""
-sudo systemctl status argus.service --no-pager -l 2>/dev/null || true
+sudo systemctl status argus.service --no-pager -l 2>/dev/null || true # REASON: informational status display; should not fail the installer.
 
 echo ""
 echo "===== Installation Complete ====="
