@@ -15,6 +15,87 @@ ARGUS_RELAY_TO="${ARGUS_RELAY_TO:-athena}"
 ARGUS_RELAY_FROM="${ARGUS_RELAY_FROM:-argus}"
 ARGUS_RELAY_TIMEOUT="${ARGUS_RELAY_TIMEOUT:-5}"
 ARGUS_RELAY_FALLBACK_FILE="${ARGUS_RELAY_FALLBACK_FILE:-$HOME/athena/state/argus/relay-fallback.jsonl}"
+ACTIONS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ARGUS_STATE_DIR="${ARGUS_STATE_DIR:-${SCRIPT_DIR:-$ACTIONS_DIR}/state}"
+ARGUS_PROBLEMS_FILE="${ARGUS_PROBLEMS_FILE:-$ARGUS_STATE_DIR/problems.jsonl}"
+
+normalize_problem_type() {
+    local value="${1:-process}"
+    case "$value" in
+        disk|memory|service|process|swap) echo "$value" ;;
+        *) echo "process" ;;
+    esac
+}
+
+normalize_problem_severity() {
+    local value="${1:-info}"
+    case "$value" in
+        critical|warning|info) echo "$value" ;;
+        *) echo "info" ;;
+    esac
+}
+
+infer_problem_type() {
+    local text="${1:-}"
+    local lower
+    lower=$(echo "$text" | tr '[:upper:]' '[:lower:]')
+    case "$lower" in
+        *disk*|*space*|*tmp*|*cache*) echo "disk" ;;
+        *memory*|*oom*|*rss*) echo "memory" ;;
+        *swap*|*thrash*) echo "swap" ;;
+        *service*|*systemctl*|*restart*|*gateway*) echo "service" ;;
+        *) echo "process" ;;
+    esac
+}
+
+infer_problem_severity() {
+    local text="${1:-}"
+    if [[ "$text" =~ [Cc][Rr][Ii][Tt][Ii][Cc][Aa][Ll]|[Ff][Aa][Ii][Ll]|[Dd][Oo][Ww][Nn]|[Uu][Nn][Rr][Ee][Aa][Cc][Hh][Aa][Bb][Ll][Ee]|[Ee][Rr][Rr][Oo][Rr] ]]; then
+        echo "critical"
+    elif [[ "$text" =~ [Ww][Aa][Rr][Nn]|[Hh][Ii][Gg][Hh] ]]; then
+        echo "warning"
+    else
+        echo "info"
+    fi
+}
+
+log_problem() {
+    local severity
+    severity=$(normalize_problem_severity "${1:-info}")
+    local problem_type
+    problem_type=$(normalize_problem_type "${2:-process}")
+    local description="${3:-No description provided}"
+    local action_taken="${4:-none}"
+    local action_result="${5:-unknown}"
+    local bead_id="${6:-null}"
+
+    local host ts
+    host=$(hostname -f 2>/dev/null || hostname) # REASON: FQDN may be unavailable; fallback to short hostname.
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    mkdir -p "$(dirname "$ARGUS_PROBLEMS_FILE")"
+    touch "$ARGUS_PROBLEMS_FILE"
+
+    jq -cn \
+        --arg ts "$ts" \
+        --arg severity "$severity" \
+        --arg type "$problem_type" \
+        --arg description "$description" \
+        --arg action_taken "$action_taken" \
+        --arg action_result "$action_result" \
+        --arg bead_id "$bead_id" \
+        --arg host "$host" \
+        '{
+            ts: $ts,
+            severity: $severity,
+            type: $type,
+            description: $description,
+            action_taken: $action_taken,
+            action_result: $action_result,
+            bead_id: (if ($bead_id == "null" or $bead_id == "") then null else $bead_id end),
+            host: $host
+        }' >> "$ARGUS_PROBLEMS_FILE"
+}
 
 relay_enabled_argus() {
     case "${ARGUS_RELAY_ENABLED,,}" in
@@ -37,7 +118,7 @@ relay_publish_problem() {
     [[ -n "$message" ]] || return 0
 
     local host timestamp payload
-    host=$(hostname -f 2>/dev/null || hostname)
+    host=$(hostname -f 2>/dev/null || hostname) # REASON: FQDN may be unavailable; fallback to short hostname.
     timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     payload=$(jq -cn \
         --arg type "alert" \
@@ -85,7 +166,7 @@ action_restart_service() {
 
     # Check current state first
     local current_state
-    current_state=$(systemctl is-active "$service_name" 2>/dev/null || echo "unknown")
+    current_state=$(systemctl is-active "$service_name" 2>/dev/null || echo "unknown") # REASON: inactive units can emit stderr during normal operation.
     echo "  Current state: $current_state"
 
     if ! systemctl restart "$service_name" 2>&1; then
@@ -96,7 +177,7 @@ action_restart_service() {
     # Verify the restart succeeded
     sleep 2
     local new_state
-    new_state=$(systemctl is-active "$service_name" 2>/dev/null || echo "unknown")
+    new_state=$(systemctl is-active "$service_name" 2>/dev/null || echo "unknown") # REASON: unavailable units are expected when restart fails.
     if [[ "$new_state" == "active" ]]; then
         echo "Service $service_name restarted successfully (now: $new_state)"
     else
@@ -123,7 +204,7 @@ action_kill_pid() {
 
     # Validate process matches allowed patterns
     local cmdline
-    cmdline=$(ps -p "$pid" -o comm= 2>/dev/null || echo "")
+    cmdline=$(ps -p "$pid" -o comm= 2>/dev/null || echo "") # REASON: process may exit between checks; empty command is handled.
 
     if [[ ! "$cmdline" =~ (node|claude|codex) ]]; then
         echo "BLOCKED: PID $pid ($cmdline) does not match allowed patterns (node|claude|codex)" >&2
@@ -131,7 +212,7 @@ action_kill_pid() {
     fi
 
     echo "Killing process: PID $pid ($cmdline) (reason: $reason)"
-    if kill "$pid" 2>/dev/null; then
+    if kill "$pid" 2>/dev/null; then # REASON: process may exit before signal delivery; warning is logged below.
         echo "Process $pid sent SIGTERM"
     else
         echo "WARNING: kill $pid failed (may have already exited)" >&2
@@ -149,7 +230,7 @@ action_kill_tmux() {
     fi
 
     # Check if session exists
-    if ! tmux has-session -t "$session_name" 2>/dev/null; then
+    if ! tmux has-session -t "$session_name" 2>/dev/null; then # REASON: missing session is a normal state probe result.
         echo "ERROR: Tmux session '$session_name' does not exist" >&2
         return 1
     fi
@@ -164,12 +245,12 @@ action_alert() {
 
     # Prepend hostname if not already present
     local hostname_tag
-    hostname_tag=$(hostname -f 2>/dev/null || hostname)
+    hostname_tag=$(hostname -f 2>/dev/null || hostname) # REASON: FQDN may be unavailable; fallback to short hostname.
     if [[ "$message" != *"$hostname_tag"* ]] && [[ "$message" != *"["* ]]; then
         message="[${hostname_tag}] ${message}"
     fi
 
-    relay_publish_problem "critical" "alert" "$message" "alert" || true
+    relay_publish_problem "critical" "alert" "$message" "alert" || true # REASON: relay publishing is best-effort and must not block alert handling.
 
     if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]] || [[ -z "${TELEGRAM_CHAT_ID:-}" ]]; then
         echo "WARNING: Telegram credentials not configured — alert logged only" >&2
@@ -193,7 +274,7 @@ action_alert() {
         response=$(curl -s -m "$TELEGRAM_TIMEOUT" -w '\n%{http_code}' -X POST \
             "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -H "Content-Type: application/json" \
-            -d "$payload" 2>&1) || true
+            -d "$payload" 2>&1) || true # REASON: curl transport failures are retried in-loop without aborting the cycle.
 
         # Extract HTTP status code (last line)
         http_code=$(echo "$response" | tail -n1)
@@ -229,7 +310,7 @@ action_log() {
     # Rotate observations file if it grows too large (> 500KB)
     if [[ -f "$log_file" ]]; then
         local obs_size
-        obs_size=$(stat -c%s "$log_file" 2>/dev/null || echo 0)
+        obs_size=$(stat -c%s "$log_file" 2>/dev/null || echo 0) # REASON: unreadable files should not stop observation logging.
         if (( obs_size > 512000 )); then
             mv "$log_file" "${log_file}.old"
             echo "# Argus Observations (rotated at $timestamp)" > "$log_file"
@@ -240,36 +321,32 @@ action_log() {
     echo "- **[$timestamp]** $observation" >> "$log_file"
     echo "Observation logged: $observation"
 
-    local severity="info"
-    if [[ "$observation" =~ [Cc][Rr][Ii][Tt][Ii][Cc][Aa][Ll]|[Ff][Aa][Ii][Ll]|[Dd][Oo][Ww][Nn]|[Uu][Nn][Rr][Ee][Aa][Cc][Hh][Aa][Bb][Ll][Ee] ]]; then
-        severity="critical"
-    elif [[ "$observation" =~ [Ww][Aa][Rr][Nn]|[Hh][Ii][Gg][Hh] ]]; then
-        severity="warning"
-    fi
-    relay_publish_problem "$severity" "observation" "$observation" "log" || true
+    local severity
+    severity=$(infer_problem_severity "$observation")
+    relay_publish_problem "$severity" "observation" "$observation" "log" || true # REASON: relay publishing is optional and non-blocking.
 
     # Check if this is a repeated problem (same observation 3+ times)
     # Use fixed-string grep to avoid regex injection from observation text
     local key_phrase="${observation:0:50}"
     local repeat_count=0
     if [[ -f "$log_file" ]]; then
-        repeat_count=$(grep -cF "$key_phrase" "$log_file" 2>/dev/null || echo 0)
+        repeat_count=$(grep -cF "$key_phrase" "$log_file" 2>/dev/null || echo 0) # REASON: missing/rotating logs should be treated as zero matches.
     fi
 
     local problem_script="$HOME/athena/scripts/problem-detected.sh"
     if (( repeat_count >= 3 )) && [[ -x "$problem_script" ]]; then
         # Repeated problem — create a bead (only if no bead exists for this issue)
         local problems_file="$HOME/athena/state/problems.jsonl"
-        if ! grep -qF "$key_phrase" "$problems_file" 2>/dev/null; then
+        if ! grep -qF "$key_phrase" "$problems_file" 2>/dev/null; then # REASON: missing problem file means no prior record.
             "$problem_script" "argus" "$observation" "Repeated ${repeat_count}x" \
-                >/dev/null 2>&1 || true
+                >/dev/null 2>&1 || true # REASON: helper script is optional; failures must not break Argus.
         fi
     else
         # First occurrence — just wake Athena
         local wake_script="$HOME/athena/scripts/wake-gateway.sh"
         if [[ -x "$wake_script" ]]; then
             "$wake_script" "Argus observation: $observation" \
-                >/dev/null 2>&1 || true
+                >/dev/null 2>&1 || true # REASON: wake script is optional; failures must not break Argus.
         fi
     fi
 }
@@ -281,7 +358,7 @@ ORPHAN_KILL_THRESHOLD=3
 action_check_and_kill_orphan_tests() {
     local dry_run="${1:-false}"
     local orphan_pids
-    orphan_pids=$(pgrep -f 'node.*--test' 2>/dev/null || true)
+    orphan_pids=$(pgrep -f 'node.*--test' 2>/dev/null || true) # REASON: no matches is expected and should not fail the cycle.
 
     if [[ -z "$orphan_pids" ]]; then
         # No orphans — reset counter
@@ -300,8 +377,8 @@ action_check_and_kill_orphan_tests() {
     local prev_count=0
     local first_seen="$now"
     if [[ -f "$ORPHAN_STATE_FILE" ]]; then
-        prev_count=$(jq -r '.count // 0' "$ORPHAN_STATE_FILE" 2>/dev/null || echo 0)
-        first_seen=$(jq -r '.first_seen // ""' "$ORPHAN_STATE_FILE" 2>/dev/null || echo "$now")
+        prev_count=$(jq -r '.count // 0' "$ORPHAN_STATE_FILE" 2>/dev/null || echo 0) # REASON: corrupted state should degrade to safe defaults.
+        first_seen=$(jq -r '.first_seen // ""' "$ORPHAN_STATE_FILE" 2>/dev/null || echo "$now") # REASON: missing prior timestamp falls back to now.
         [[ -z "$first_seen" ]] && first_seen="$now"
     fi
 
@@ -326,12 +403,13 @@ action_check_and_kill_orphan_tests() {
 
         if [[ "$dry_run" == "true" ]]; then
             echo "[DRY-RUN] Would kill PIDs: $(echo "$orphan_pids" | tr '\n' ' ')"
+            log_problem "warning" "process" "Orphan node --test detected ${new_count}x; dry-run skip" "kill_orphan_tests:${count}" "skipped" "null" || true # REASON: registry writes are best-effort in dry-run mode.
             return 0
         fi
 
         local pid killed=0
         for pid in $orphan_pids; do
-            if kill -TERM "$pid" 2>/dev/null; then
+            if kill -TERM "$pid" 2>/dev/null; then # REASON: process may exit concurrently; missed kills are tolerated.
                 killed=$((killed + 1))
             fi
         done
@@ -340,8 +418,8 @@ action_check_and_kill_orphan_tests() {
         sleep 5
         local force_killed=0
         for pid in $orphan_pids; do
-            if kill -0 "$pid" 2>/dev/null; then
-                kill -9 "$pid" 2>/dev/null || true
+            if kill -0 "$pid" 2>/dev/null; then # REASON: existence check may race with process exit.
+                kill -9 "$pid" 2>/dev/null || true # REASON: stubborn process may exit before SIGKILL; continue cleanup.
                 force_killed=$((force_killed + 1))
                 echo "[${now}] [ACTION] SIGKILL sent to stubborn orphan PID ${pid}" >> "$argus_log"
             fi
@@ -350,9 +428,11 @@ action_check_and_kill_orphan_tests() {
         # Reset state after kill
         rm -f "$ORPHAN_STATE_FILE"
         echo "Orphan cleanup complete: $killed SIGTERM, $force_killed SIGKILL"
+        log_problem "warning" "process" "Auto-killed orphan node --test processes after repeated detection (${new_count}x)" "kill_orphan_tests:${count}" "success" "null" || true # REASON: registry write failures must not block remediation.
     else
         echo "Orphan node --test detected ${new_count}/${ORPHAN_KILL_THRESHOLD} — tracking"
         echo "[${now}] [INFO] Orphan node --test count: ${new_count}/${ORPHAN_KILL_THRESHOLD}" >> "$argus_log"
+        log_problem "info" "process" "Orphan node --test detected (${new_count}/${ORPHAN_KILL_THRESHOLD}); tracking" "monitor_orphan_tests:${count}" "skipped" "null" || true # REASON: best-effort telemetry for non-critical tracking path.
     fi
 }
 
@@ -361,7 +441,7 @@ execute_action() {
     local action_json="$1"
 
     # Validate we got valid JSON
-    if ! echo "$action_json" | jq empty 2>/dev/null; then
+    if ! echo "$action_json" | jq empty 2>/dev/null; then # REASON: invalid JSON parse errors are intentionally replaced with a clean validation error.
         echo "ERROR: Invalid action JSON: $action_json" >&2
         return 1
     fi
@@ -372,30 +452,81 @@ execute_action() {
     target=$(echo "$action_json" | jq -r '.target // empty')
     local reason
     reason=$(echo "$action_json" | jq -r '.reason // "No reason provided"')
+    local description="$reason"
+    local problem_type="process"
+    local severity="info"
+    local action_taken="${action_type}:${target}"
+    local action_result="success"
+    local action_failed=false
 
     case "$action_type" in
         restart_service)
-            action_restart_service "$target" "$reason"
+            problem_type="service"
+            severity="warning"
+            description="Service action for ${target}: ${reason}"
+            if ! action_restart_service "$target" "$reason"; then
+                action_result="failure"
+                severity="critical"
+                action_failed=true
+            fi
             ;;
         kill_pid)
-            action_kill_pid "$target" "$reason"
+            problem_type="process"
+            severity="warning"
+            description="Kill PID ${target}: ${reason}"
+            if ! action_kill_pid "$target" "$reason"; then
+                action_result="failure"
+                severity="critical"
+                action_failed=true
+            fi
             ;;
         kill_tmux)
-            action_kill_tmux "$target" "$reason"
+            problem_type="process"
+            severity="warning"
+            description="Kill tmux ${target}: ${reason}"
+            if ! action_kill_tmux "$target" "$reason"; then
+                action_result="failure"
+                severity="critical"
+                action_failed=true
+            fi
             ;;
         alert)
             local message
             message=$(echo "$action_json" | jq -r '.message // .target // "No message"')
-            action_alert "$message"
+            description="$message"
+            problem_type=$(infer_problem_type "$message")
+            severity=$(infer_problem_severity "$message")
+            action_taken="alert:telegram"
+            if ! action_alert "$message"; then
+                action_result="failure"
+                severity="critical"
+                action_failed=true
+            fi
             ;;
         log)
             local observation
             observation=$(echo "$action_json" | jq -r '.observation // .target // "No observation"')
-            action_log "$observation"
+            description="$observation"
+            problem_type=$(infer_problem_type "$observation")
+            severity=$(infer_problem_severity "$observation")
+            action_taken="log:observation"
+            if ! action_log "$observation"; then
+                action_result="failure"
+                severity="critical"
+                action_failed=true
+            fi
             ;;
         *)
             echo "ERROR: Unknown action type '$action_type' — only restart_service, kill_pid, kill_tmux, alert, log are allowed" >&2
             return 1
             ;;
     esac
+
+    log_problem "$severity" "$problem_type" "$description" "$action_taken" "$action_result" "null" || true # REASON: action execution result should return even if registry append fails.
+
+    if [[ "$action_failed" == "true" ]]; then
+        return 1
+    fi
+
+    return 0
 }

@@ -6,6 +6,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased]
 
+### Added
+- ARG-001 (2026-02-20): Added structured problem registry logging to `state/problems.jsonl` for all LLM-triggered actions and deterministic orphan-process handling, including severity/type/action metadata for reliable diagnostics and `jq` querying.
+- ARG-001 (2026-02-20): Documented the problem registry schema and validation command in `README.md`.
+
 ## [2026-02-20]
 
 ### Added

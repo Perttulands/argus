@@ -92,6 +92,31 @@ No arbitrary command execution. Every input is validated like it's trying to esc
 - Clean shutdown on SIGTERM/SIGINT
 - JSON state via `jq` (no injection from error messages)
 
+## Problem Registry
+
+Argus records detected problems to `state/problems.jsonl` (override with `ARGUS_PROBLEMS_FILE`).
+
+Each line is a JSON object with this schema:
+
+```json
+{
+  "ts": "2026-02-20T00:00:00Z",
+  "severity": "critical|warning|info",
+  "type": "disk|memory|service|process|swap",
+  "description": "human-readable problem summary",
+  "action_taken": "restart_service:openclaw-gateway",
+  "action_result": "success|failure|skipped",
+  "bead_id": null,
+  "host": "hostname"
+}
+```
+
+Quick validation:
+
+```bash
+jq -c . state/problems.jsonl >/dev/null
+```
+
 ## Relay Problem Reports (Optional)
 
 When Relay is available, Argus also publishes structured problem events to Athena:
