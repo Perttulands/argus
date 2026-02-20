@@ -6,23 +6,22 @@ Documentation=https://github.com/perttu/argus
 
 [Service]
 Type=simple
-User=perttu
-Group=perttu
-WorkingDirectory=~/argus
-Environment="PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-EnvironmentFile=-/etc/argus/argus.env
-ExecStart=/usr/bin/bash -lc ./argus.sh
+User=chrote
+Group=chrote
+WorkingDirectory=/home/chrote/athena/tools/argus
+Environment="PATH=/home/chrote/.local/bin:/home/chrote/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+EnvironmentFile=-/home/chrote/athena/tools/argus/argus.env
+ExecStart=/usr/bin/bash -lc './argus.sh'
 Restart=always
 RestartSec=30
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=argus
 
-# Resource limits — prevent runaway memory from LLM subprocess
+# Resource limits
 MemoryMax=1G
 MemoryHigh=768M
 
-# Give the process time to finish a cycle on stop
 TimeoutStopSec=30
 
 # Security hardening
@@ -30,7 +29,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=%h/athena/state %h/argus/logs
+ReadWritePaths=/home/chrote/athena/tools/argus/logs /home/chrote/.openclaw-athena
 
 [Install]
 WantedBy=multi-user.target
