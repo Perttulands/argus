@@ -25,6 +25,8 @@ ARGUS_BEAD_REPEAT_WINDOW_SECONDS="${ARGUS_BEAD_REPEAT_WINDOW_SECONDS:-86400}"
 ARGUS_DEDUP_FILE="${ARGUS_DEDUP_FILE:-$ARGUS_STATE_DIR/dedup.json}"
 ARGUS_DEDUP_WINDOW="${ARGUS_DEDUP_WINDOW:-3600}"
 ARGUS_DEDUP_RETENTION_SECONDS="${ARGUS_DEDUP_RETENTION_SECONDS:-86400}"
+ARGUS_DISK_CLEAN_MAX_AGE_DAYS="${ARGUS_DISK_CLEAN_MAX_AGE_DAYS:-7}"
+ARGUS_DISK_CLEAN_DRY_RUN="${ARGUS_DISK_CLEAN_DRY_RUN:-false}"
 
 normalize_problem_type() {
     local value="${1:-process}"
@@ -511,6 +513,113 @@ action_log() {
     fi
 }
 
+bool_env_true() {
+    local value="${1:-false}"
+    case "${value,,}" in
+        1|true|yes|on) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+disk_root_pct() {
+    df -P / 2>/dev/null | awk 'NR==2 {gsub("%","",$5); print $5}' # REASON: some environments emit warnings on non-standard filesystems.
+}
+
+disk_root_avail_kb() {
+    df --output=avail / 2>/dev/null | tail -n1 | tr -d ' ' # REASON: df can emit transient stderr in containerized environments.
+}
+
+remove_old_entries() {
+    local root="$1"
+    local age_days="$2"
+    local mode="$3"
+    local removed=0
+    [[ -d "$root" ]] || {
+        echo 0
+        return 0
+    }
+
+    while IFS= read -r -d '' path; do
+        if [[ "$mode" == "dry-run" ]]; then
+            removed=$((removed + 1))
+            continue
+        fi
+        rm -rf -- "$path"
+        removed=$((removed + 1))
+    done < <(find "$root" -mindepth 1 -xdev -mtime +"$age_days" -print0 2>/dev/null) # REASON: permission-denied paths are skipped by design.
+    echo "$removed"
+}
+
+remove_old_archives() {
+    local root="$1"
+    local age_days="$2"
+    local mode="$3"
+    local removed=0
+    [[ -d "$root" ]] || {
+        echo 0
+        return 0
+    }
+
+    while IFS= read -r -d '' archive; do
+        if [[ "$mode" == "dry-run" ]]; then
+            removed=$((removed + 1))
+            continue
+        fi
+        rm -f -- "$archive"
+        removed=$((removed + 1))
+    done < <(find "$root" -maxdepth 1 -type f -name '*.log.[0-9].gz' -mtime +"$age_days" -print0 2>/dev/null) # REASON: archive discovery should ignore inaccessible directories.
+    echo "$removed"
+}
+
+action_clean_disk() {
+    local reason="${1:-Disk usage above threshold}"
+    local age_days="$ARGUS_DISK_CLEAN_MAX_AGE_DAYS"
+    local mode="execute"
+    bool_env_true "$ARGUS_DISK_CLEAN_DRY_RUN" && mode="dry-run"
+
+    local before_pct after_pct before_avail after_avail
+    before_pct=$(disk_root_pct)
+    before_avail=$(disk_root_avail_kb)
+    [[ "$before_pct" =~ ^[0-9]+$ ]] || before_pct=0
+    [[ "$before_avail" =~ ^[0-9]+$ ]] || before_avail=0
+
+    local removed_entries=0
+    local cleaned
+
+    # Hardcoded safelist only.
+    cleaned=$(remove_old_entries "/tmp" "$age_days" "$mode")
+    removed_entries=$((removed_entries + cleaned))
+    cleaned=$(remove_old_entries "/var/tmp" "$age_days" "$mode")
+    removed_entries=$((removed_entries + cleaned))
+
+    for cache_dir in "$HOME/.cache/pip" "$HOME/.cache/npm" "$HOME/.cache/yarn" "$HOME/.cache/go-build"; do
+        cleaned=$(remove_old_entries "$cache_dir" "$age_days" "$mode")
+        removed_entries=$((removed_entries + cleaned))
+    done
+
+    cleaned=$(remove_old_archives "/var/log" "$age_days" "$mode")
+    removed_entries=$((removed_entries + cleaned))
+    cleaned=$(remove_old_archives "${SCRIPT_DIR:-$ACTIONS_DIR}/logs" "$age_days" "$mode")
+    removed_entries=$((removed_entries + cleaned))
+
+    after_pct=$(disk_root_pct)
+    after_avail=$(disk_root_avail_kb)
+    [[ "$after_pct" =~ ^[0-9]+$ ]] || after_pct="$before_pct"
+    [[ "$after_avail" =~ ^[0-9]+$ ]] || after_avail="$before_avail"
+
+    local reclaimed_kb=0 reclaimed_bytes=0
+    if (( after_avail > before_avail )); then
+        reclaimed_kb=$((after_avail - before_avail))
+        reclaimed_bytes=$((reclaimed_kb * 1024))
+    fi
+
+    ARGUS_LAST_DISK_CLEAN_SUMMARY="before_pct=${before_pct},after_pct=${after_pct},reclaimed_bytes=${reclaimed_bytes},removed_entries=${removed_entries},mode=${mode},reason=${reason}"
+
+    local msg
+    msg="Disk cleanup (${mode}) complete: ${before_pct}% -> ${after_pct}% on /, reclaimed ${reclaimed_kb}KB, removed ${removed_entries} entries."
+    action_alert "$msg"
+}
+
 # Auto-kill orphan node --test processes after repeated detection
 ORPHAN_STATE_FILE="${ARGUS_ORPHAN_STATE:-$HOME/athena/state/argus-orphans.json}"
 ORPHAN_KILL_THRESHOLD=3
@@ -655,6 +764,20 @@ execute_action() {
                 action_failed=true
             fi
             ;;
+        clean_disk)
+            problem_type="disk"
+            severity="warning"
+            action_taken="clean_disk:safelist"
+            description="Disk cleanup triggered: ${reason}"
+            if ! action_clean_disk "$reason"; then
+                action_result="failure"
+                severity="critical"
+                action_failed=true
+            fi
+            if [[ -n "${ARGUS_LAST_DISK_CLEAN_SUMMARY:-}" ]]; then
+                description="${description}; ${ARGUS_LAST_DISK_CLEAN_SUMMARY}"
+            fi
+            ;;
         alert)
             local message
             message=$(echo "$action_json" | jq -r '.message // .target // "No message"')
@@ -688,7 +811,7 @@ execute_action() {
             fi
             ;;
         *)
-            echo "ERROR: Unknown action type '$action_type' — only restart_service, kill_pid, kill_tmux, alert, log are allowed" >&2
+            echo "ERROR: Unknown action type '$action_type' — only restart_service, kill_pid, kill_tmux, clean_disk, alert, log are allowed" >&2
             return 1
             ;;
     esac

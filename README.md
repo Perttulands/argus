@@ -26,6 +26,7 @@ Argus collects system metrics (CPU, memory, disk, swap, processes, service healt
 | `restart_service` | Restarts a service | Must be in explicit allowlist |
 | `kill_pid` | Kills a process | Must match `node\|claude\|codex` |
 | `kill_tmux` | Kills a tmux session | Name sanitized against injection |
+| `clean_disk` | Cleans old files from safe temp/cache/archive paths | Hardcoded safelist only (`/tmp`, `/var/tmp`, selected `~/.cache`, log archives) |
 | `alert` | Sends a Telegram notification | Retry on failure, hostname prepended |
 | `log` | Records an observation | Auto-escalates after 3 consecutive repeats |
 
