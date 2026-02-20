@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 )
@@ -129,44 +130,55 @@ func (w *Watchdog) AddCheck(check Check) {
 	w.checks = append(w.checks, check)
 }
 
-func (w *Watchdog) Run(ctx context.Context, interval time.Duration, once bool) {
+func (w *Watchdog) Run(ctx context.Context, interval time.Duration, once bool) error {
 	if interval <= 0 {
 		interval = time.Minute
 	}
 
 	if once {
-		w.RunCycle(ctx)
-		return
+		return w.RunCycle(ctx)
 	}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	var runErr error
 
 	for {
-		w.RunCycle(ctx)
+		if err := w.RunCycle(ctx); err != nil {
+			runErr = errors.Join(runErr, err)
+		}
 		select {
 		case <-ctx.Done():
-			return
+			return runErr
 		case <-ticker.C:
 		}
 	}
 }
 
-func (w *Watchdog) RunCycle(ctx context.Context) {
+func (w *Watchdog) RunCycle(ctx context.Context) error {
 	start := w.clock().UTC()
+	var priorLastSuccess *time.Time
+	var priorConsecutiveFailures int
 	w.mu.Lock()
+	priorLastSuccess = cloneTimePtr(w.state.LastSuccess)
+	priorConsecutiveFailures = w.state.ConsecutiveFailures
 	w.state.Running = true
 	w.state.LastCycleStart = cloneTimePtr(&start)
 	w.state.Checks = nil
 	w.mu.Unlock()
 
+	var cycleErr error
+	failureReasons := make([]string, 0)
 	if err := w.writeBreadcrumb(); err != nil {
-		w.logger.Printf("failed to write start breadcrumb: %v", err)
+		msg := fmt.Sprintf("failed to write start breadcrumb: %v", err)
+		w.logger.Printf("%s", msg)
+		failureReasons = append(failureReasons, msg)
+		cycleErr = errors.Join(cycleErr, fmt.Errorf("write start breadcrumb: %w", err))
 	}
 
 	checks := w.snapshotChecks()
 	results := make([]CheckStatus, 0, len(checks))
-	failures := 0
+	checkFailures := 0
 
 	for _, check := range checks {
 		result := CheckStatus{
@@ -175,8 +187,10 @@ func (w *Watchdog) RunCycle(ctx context.Context) {
 		}
 		err := w.runCheck(ctx, check)
 		if err != nil {
-			failures++
+			checkFailures++
 			result.Error = err.Error()
+			failureReasons = append(failureReasons, fmt.Sprintf("check %q failed: %v", check.Name, err))
+			cycleErr = errors.Join(cycleErr, fmt.Errorf("check %q: %w", check.Name, err))
 			var panicErr *panicError
 			if errors.As(err, &panicErr) {
 				result.Panicked = true
@@ -190,24 +204,46 @@ func (w *Watchdog) RunCycle(ctx context.Context) {
 	}
 
 	end := w.clock().UTC()
+	hadFailuresBeforeEnd := len(failureReasons) > 0 || checkFailures > 0
 	w.mu.Lock()
 	w.state.Running = false
 	w.state.LastCycleEnd = cloneTimePtr(&end)
 	w.state.Checks = results
-	if failures == 0 {
+	if !hadFailuresBeforeEnd {
 		w.state.LastSuccess = cloneTimePtr(&end)
 		w.state.ConsecutiveFailures = 0
 		w.state.LastError = ""
 		w.state.PreviousCycleInterrupted = false
 	} else {
 		w.state.ConsecutiveFailures++
-		w.state.LastError = fmt.Sprintf("%d check(s) failed in last cycle", failures)
+		if len(failureReasons) == 0 {
+			w.state.LastError = fmt.Sprintf("%d check(s) failed in last cycle", checkFailures)
+		} else {
+			w.state.LastError = strings.Join(failureReasons, "; ")
+		}
 	}
 	w.mu.Unlock()
 
 	if err := w.writeBreadcrumb(); err != nil {
-		w.logger.Printf("failed to write end breadcrumb: %v", err)
+		msg := fmt.Sprintf("failed to write end breadcrumb: %v", err)
+		w.logger.Printf("%s", msg)
+		cycleErr = errors.Join(cycleErr, fmt.Errorf("write end breadcrumb: %w", err))
+		w.mu.Lock()
+		if !hadFailuresBeforeEnd {
+			w.state.LastSuccess = priorLastSuccess
+			w.state.ConsecutiveFailures = priorConsecutiveFailures + 1
+			w.state.LastError = msg
+		} else {
+			if w.state.LastError == "" {
+				w.state.LastError = msg
+			} else {
+				w.state.LastError += "; " + msg
+			}
+		}
+		w.mu.Unlock()
 	}
+
+	return cycleErr
 }
 
 func (w *Watchdog) HealthHandler(rw http.ResponseWriter, req *http.Request) {
@@ -228,7 +264,13 @@ func (w *Watchdog) HealthHandler(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	rw.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(rw).Encode(payload); err != nil {
+	encodedPayload, err := json.Marshal(payload)
+	if err != nil {
+		w.logger.Printf("failed to marshal /health response: %v", err)
+		http.Error(rw, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if _, err := rw.Write(encodedPayload); err != nil {
 		w.logger.Printf("failed to write /health response: %v", err)
 	}
 }
@@ -307,21 +349,29 @@ func (w *Watchdog) writeBreadcrumb() error {
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(s); err != nil {
-		f.Close()
-		_ = os.Remove(tmpFile)
-		return fmt.Errorf("encode breadcrumb %q: %w", tmpFile, err)
+		closeErr := f.Close()
+		wrappedErr := fmt.Errorf("encode breadcrumb %q: %w", tmpFile, err)
+		if closeErr != nil {
+			wrappedErr = errors.Join(wrappedErr, fmt.Errorf("close temp breadcrumb %q: %w", tmpFile, closeErr))
+		}
+		return cleanupTempFile(tmpFile, wrappedErr)
 	}
 
 	if err := f.Close(); err != nil {
-		_ = os.Remove(tmpFile)
-		return fmt.Errorf("close temp breadcrumb %q: %w", tmpFile, err)
+		return cleanupTempFile(tmpFile, fmt.Errorf("close temp breadcrumb %q: %w", tmpFile, err))
 	}
 
 	if err := os.Rename(tmpFile, w.breadcrumbPath); err != nil {
-		_ = os.Remove(tmpFile)
-		return fmt.Errorf("replace breadcrumb %q: %w", w.breadcrumbPath, err)
+		return cleanupTempFile(tmpFile, fmt.Errorf("replace breadcrumb %q: %w", w.breadcrumbPath, err))
 	}
 	return nil
+}
+
+func cleanupTempFile(tmpFile string, originalErr error) error {
+	if err := os.Remove(tmpFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(originalErr, fmt.Errorf("remove temp breadcrumb %q: %w", tmpFile, err))
+	}
+	return originalErr
 }
 
 func (w *Watchdog) snapshotChecks() []Check {

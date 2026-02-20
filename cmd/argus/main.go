@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -14,6 +16,14 @@ import (
 )
 
 func main() {
+	logger := log.New(os.Stdout, "argus: ", log.LstdFlags|log.LUTC)
+	if err := run(logger); err != nil {
+		logger.Printf("fatal error: %v", err)
+		os.Exit(1)
+	}
+}
+
+func run(logger *log.Logger) error {
 	var (
 		breadcrumbPath = flag.String("breadcrumb-file", "logs/watchdog.breadcrumb.json", "breadcrumb state file path")
 		healthAddr     = flag.String("health-addr", ":8080", "health server bind address (empty disables server)")
@@ -23,15 +33,13 @@ func main() {
 	)
 	flag.Parse()
 
-	logger := log.New(os.Stdout, "argus: ", log.LstdFlags|log.LUTC)
-
 	wd, err := watchdog.New(watchdog.Config{
 		BreadcrumbPath: *breadcrumbPath,
 		Logger:         logger,
 		DryRun:         *dryRun,
 	})
 	if err != nil {
-		logger.Fatalf("watchdog init failed: %v", err)
+		return fmt.Errorf("watchdog init failed: %w", err)
 	}
 
 	wd.SetChecks([]watchdog.Check{
@@ -79,13 +87,18 @@ func main() {
 		}()
 	}
 
-	wd.Run(ctx, *interval, *once)
+	var runErr error
+	if err := wd.Run(ctx, *interval, *once); err != nil {
+		runErr = errors.Join(runErr, fmt.Errorf("watchdog run failed: %w", err))
+	}
 
 	if srv != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			logger.Printf("health server shutdown failed: %v", err)
+			runErr = errors.Join(runErr, fmt.Errorf("health server shutdown failed: %w", err))
 		}
 	}
+
+	return runErr
 }

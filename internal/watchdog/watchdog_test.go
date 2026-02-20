@@ -62,7 +62,9 @@ func TestRunCycleContinuesAfterErrorAndPanic(t *testing.T) {
 		},
 	})
 
-	wd.RunCycle(context.Background())
+	if err := wd.RunCycle(context.Background()); err == nil {
+		t.Fatal("RunCycle() error = nil, want aggregated cycle error")
+	}
 
 	expectedOrder := []string{"returns-error", "panics", "still-runs"}
 	if !reflect.DeepEqual(executed, expectedOrder) {
@@ -169,7 +171,9 @@ func TestHealthHandlerReturnsJSONStatus(t *testing.T) {
 			},
 		},
 	})
-	wd.RunCycle(context.Background())
+	if err := wd.RunCycle(context.Background()); err != nil {
+		t.Fatalf("RunCycle() error = %v, want nil", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()

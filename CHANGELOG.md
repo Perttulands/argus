@@ -14,6 +14,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - Improved `claude -p` failure diagnostics in `argus.sh` by capturing and logging stderr output on non-zero exits.
 - Wrapped watchdog breadcrumb load errors with context (`load breadcrumb: ...`) in `internal/watchdog/watchdog.go`.
 
+### Fixed
+- 2026-02-20: Resolved truthsayer-reported swallowed error paths in `cmd/argus/main.go` by returning wrapped runtime/shutdown errors through `run()` and exiting non-zero in `main`, so failures are no longer silently logged during shutdown.
+- 2026-02-20: Resolved watchdog error-handling gaps in `internal/watchdog/watchdog.go` by propagating cycle errors from `RunCycle`/`Run`, preserving failure state when breadcrumb persistence fails, and handling temp-file cleanup errors instead of discarding them.
+
 ### Removed
 - `.truthsayer.toml` reverted — rule suppression removed, judge handles context directly (eed4559)
 
