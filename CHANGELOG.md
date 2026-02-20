@@ -6,21 +6,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased]
 
+## [2026-02-20]
+
 ### Added
 - Optional Relay problem publishing in `actions.sh` with configurable route/sender/timeout and automatic JSONL fallback when Relay is unavailable.
 
 ### Changed
-- README: mythology-forward rewrite — each README now reads like discovering a character in a world
+- Documented Relay problem publishing setup in `README.md` and `argus.env.example`.
 
 ## [0.2.1] - 2026-02-19
 
 ### Added
 - "For Agents" section in README: install, what-this-is, and runtime usage for agent consumers
 
-## [Unreleased]
-
 ### Changed
-- README: mythology-forward rewrite — each README now reads like discovering a character in a world
+- README: mythology-forward rewrite to align with other Athena tool docs.
 
 ## [0.2.0] - 2026-02-19
 
@@ -32,11 +32,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - `prompt.md` updated to reflect reduced service scope
 - `actions.sh` cleared allowed services list
 - `collectors.sh` removed athena-web systemd and port 9000 checks
-
-## [Unreleased]
-
-### Changed
-- README: mythology-forward rewrite — each README now reads like discovering a character in a world
 
 ## [0.1.0] - 2026-02-13
 
