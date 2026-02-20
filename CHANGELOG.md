@@ -6,47 +6,83 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased]
 
+### Added
+- `.truthsayer.toml` config and pre-commit hook for agent instruction enforcement (7a79735)
+
 ### Changed
-- README: mythology-forward rewrite — each README now reads like discovering a character in a world
+- README: further mythology-forward rewrite — spicy, standalone voice (f042a84, e5f62eb)
+
+### Removed
+- `.truthsayer.toml` reverted — rule suppression removed, judge handles context directly (eed4559)
 
 ## [0.2.1] - 2026-02-19
 
 ### Added
-- "For Agents" section in README: install, what-this-is, and runtime usage for agent consumers
-
-## [Unreleased]
-
-### Changed
-- README: mythology-forward rewrite — each README now reads like discovering a character in a world
+- "For Agents" section in README: install instructions, runtime usage, and what-this-is for agent consumers (f286e6d)
+- Changelog ground rule added to `AGENTS.md`: every user-facing change requires a CHANGELOG entry (4faa9d2)
 
 ## [0.2.0] - 2026-02-19
 
+### Added
+- `IMPROVEMENTS.md`: five prioritised engineering improvements with implementation plans (5c09fc9)
+- Banner image added to `README.md` (a7c316c)
+
+### Changed
+- README rewritten in Athena's Agora mythology voice (0acf2bc, bd4496d)
+- Gateway health check switched from systemd unit to port 18500 TCP probe — supports non-systemd deployments (4d8a572)
+- `prompt.md` updated to reflect reduced service scope and new gateway check method (4d8a572, 5c09fc9)
+- Allowed services list in `actions.sh` and `prompt.md` updated (4d8a572)
+- `argus.service` and `install.sh` path fixes (815be6a)
+
+### Fixed
+- Arithmetic errors in process and tmux session counting in `collectors.sh` (807e435)
+- README title typo (e72d3f5)
+
 ### Removed
-- athena-web dropped from monitoring round (service, port 9000 check, restart action)
-- Athena API reachability check removed from collectors
+- `athena-web` dropped from monitoring: service checks, port 9000 probe, and restart action removed (5c09fc9)
+- `mcp-agent-mail` removed from monitoring scope, collectors, and documentation (815be6a)
+
+## [0.1.1] - 2026-02-16
+
+### Added
+- Go watchdog runtime: `cmd/argus/main.go` and `internal/watchdog/` package with breadcrumb crash recovery, `/health` HTTP endpoint, panic isolation per check, and dry-run mode (c9e0ecf)
+- Unit tests for watchdog: cycle continuation after errors and panics, interrupted breadcrumb recovery, health handler JSON contract (c9e0ecf)
+- Log rotation: `argus.log` rotates at 10 MB (3 backups kept); `observations.md` rotates at 500 KB (8733266)
+- Disk space guard: skips LLM call and sends emergency Telegram alert when less than 100 MB free (8733266)
+- JSON safety: all state files (`cycle_state.json`, `argus-orphans.json`) written via `jq` — eliminates injection risk from error message content (8733266)
+- Telegram retry: failed alerts retried once before giving up; alert failure no longer fails the monitoring cycle (8733266)
+- Hostname prepended in all Telegram alerts for multi-server clarity (8733266)
+- Self-monitor rate limiting: operator alerted every 3rd consecutive failure rather than every cycle (8733266)
+- Orphan `node --test` auto-kill: after 3 consecutive detections, processes are SIGTERM'd (SIGKILL after 5 s if stubborn); state tracked in `argus-orphans.json` (0fa190a)
+
+### Fixed
+- LLM call timeout (120 s) added to prevent infinite hangs on unresponsive `claude -p` (8c7306b)
+- Self-monitoring across cycles: operator alerted after 3 consecutive cycle failures (8c7306b)
+- `((action_count++))` failure under `set -e` when count starts at zero (8c7306b)
+- `sed` code fence stripping: switched to line-delete to correctly remove ` ``` ` and ` ```json ` wrappers from LLM output (8c7306b)
+- `pgrep` self-matching in `collectors.sh`: switched to `-cf` flag for count-only matching (8c7306b)
+- Each collector wrapped in independent error handler — one failing collector no longer aborts the entire cycle (8c7306b)
 
 ### Changed
-- `prompt.md` updated to reflect reduced service scope
-- `actions.sh` cleared allowed services list
-- `collectors.sh` removed athena-web systemd and port 9000 checks
-
-## [Unreleased]
-
-### Changed
-- README: mythology-forward rewrite — each README now reads like discovering a character in a world
+- Dependency check at startup: `claude`, `jq`, `curl` verified before entering the monitoring loop (8c7306b)
+- `<YOUR_HOSTNAME>` placeholder in `prompt.md` auto-substituted at runtime (8c7306b)
+- Self-monitor status fed into metrics payload so the LLM can reason about Argus's own health (8c7306b)
+- Observations logged to file and repeated problem detection triggers `problem-detected.sh` bead creation (0fa190a)
 
 ## [0.1.0] - 2026-02-13
 
 ### Added
-- Standalone systemd ops watchdog service
-- AI-powered monitoring using Claude Haiku for decision-making
-- 5-minute metric collection and analysis loop
-- Service monitoring (openclaw-gateway, athena-web)
-- System metrics (memory, disk, load, uptime)
-- 5 allowlisted corrective actions
-- Independent Telegram bot alerting
-- Integration with `problem-detected.sh` for auto-bead creation on repeated issues
+- Standalone systemd ops watchdog service (`argus.service`, `install.sh`)
+- AI-powered monitoring loop using Claude Haiku for decision-making, running every 5 minutes
+- System metric collection: memory, disk, load average, uptime (`collectors.sh`)
+- Service monitoring: `openclaw-gateway`, `athena-web`
+- Process monitoring: orphan `node --test` detection, tmux session inventory
+- Athena memory file modification tracking
+- Five allowlisted corrective actions: `restart_service`, `kill_pid`, `kill_tmux`, `alert`, `log` (`actions.sh`)
+- Independent Telegram bot alerting with credential-based configuration (`argus.env`)
+- Integration with `problem-detected.sh` for automatic bead creation on repeated issues
 - Core scripts: `argus.sh`, `collectors.sh`, `actions.sh`, `prompt.md`
+- `argus.env.example` for credential configuration reference
 
 ### Changed
-- Hardcoded host and home paths removed from service/scripts/docs
+- Hardcoded host and home paths removed from service file, scripts, and documentation (816ae74)
