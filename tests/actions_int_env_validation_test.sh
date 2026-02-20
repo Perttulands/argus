@@ -32,10 +32,15 @@ assert_invalid_env() {
 }
 
 assert_source_ok
+assert_invalid_env "ARGUS_RELAY_TIMEOUT" "0"
+assert_invalid_env "ARGUS_BEAD_PRIORITY" "9"
 assert_invalid_env "ARGUS_BEAD_REPEAT_THRESHOLD" "bad"
 assert_invalid_env "ARGUS_BEAD_REPEAT_WINDOW_SECONDS" "9999999"
 assert_invalid_env "ARGUS_DEDUP_WINDOW" "0"
+assert_invalid_env "ARGUS_DEDUP_RETENTION_SECONDS" "oops"
 assert_invalid_env "ARGUS_DISK_CLEAN_MAX_AGE_DAYS" "x"
 assert_invalid_env "ARGUS_RESTART_BACKOFF_SECOND_DELAY" "-1"
+assert_invalid_env "ARGUS_RESTART_BACKOFF_THIRD_DELAY" "0"
+assert_invalid_env "ARGUS_RESTART_COOLDOWN_SECONDS" "200000"
 
 echo "actions_int_env_validation_test: PASS"
