@@ -6,6 +6,23 @@ set -euo pipefail
 # Security model: The LLM can only trigger these 5 actions.
 # Each action validates its inputs before execution.
 
+validate_int_env() {
+    local var_name="$1"
+    local min="$2"
+    local max="$3"
+    local value="${!var_name:-}"
+
+    if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: ${var_name} must be an integer (got '${value}')" >&2
+        exit 1
+    fi
+
+    if (( value < min || value > max )); then
+        echo "ERROR: ${var_name} out of range (${min}-${max}, got '${value}')" >&2
+        exit 1
+    fi
+}
+
 ALLOWED_SERVICES=()
 TELEGRAM_TIMEOUT=10   # seconds for Telegram API calls
 TELEGRAM_MAX_RETRIES=2 # retry failed Telegram sends
@@ -21,14 +38,19 @@ ARGUS_PROBLEMS_FILE="${ARGUS_PROBLEMS_FILE:-$ARGUS_STATE_DIR/problems.jsonl}"
 ARGUS_BEADS_WORKDIR="${ARGUS_BEADS_WORKDIR:-$HOME/athena/workspace}"
 ARGUS_BEAD_PRIORITY="${ARGUS_BEAD_PRIORITY:-2}"
 ARGUS_BEAD_REPEAT_THRESHOLD="${ARGUS_BEAD_REPEAT_THRESHOLD:-3}"
+validate_int_env "ARGUS_BEAD_REPEAT_THRESHOLD" 1 100
 ARGUS_BEAD_REPEAT_WINDOW_SECONDS="${ARGUS_BEAD_REPEAT_WINDOW_SECONDS:-86400}"
+validate_int_env "ARGUS_BEAD_REPEAT_WINDOW_SECONDS" 60 604800
 ARGUS_DEDUP_FILE="${ARGUS_DEDUP_FILE:-$ARGUS_STATE_DIR/dedup.json}"
 ARGUS_DEDUP_WINDOW="${ARGUS_DEDUP_WINDOW:-3600}"
+validate_int_env "ARGUS_DEDUP_WINDOW" 60 86400
 ARGUS_DEDUP_RETENTION_SECONDS="${ARGUS_DEDUP_RETENTION_SECONDS:-86400}"
 ARGUS_DISK_CLEAN_MAX_AGE_DAYS="${ARGUS_DISK_CLEAN_MAX_AGE_DAYS:-7}"
+validate_int_env "ARGUS_DISK_CLEAN_MAX_AGE_DAYS" 1 365
 ARGUS_DISK_CLEAN_DRY_RUN="${ARGUS_DISK_CLEAN_DRY_RUN:-false}"
 ARGUS_RESTART_BACKOFF_FILE="${ARGUS_RESTART_BACKOFF_FILE:-$ARGUS_STATE_DIR/restart-backoff.json}"
 ARGUS_RESTART_BACKOFF_SECOND_DELAY="${ARGUS_RESTART_BACKOFF_SECOND_DELAY:-60}"
+validate_int_env "ARGUS_RESTART_BACKOFF_SECOND_DELAY" 1 3600
 ARGUS_RESTART_BACKOFF_THIRD_DELAY="${ARGUS_RESTART_BACKOFF_THIRD_DELAY:-300}"
 ARGUS_RESTART_COOLDOWN_SECONDS="${ARGUS_RESTART_COOLDOWN_SECONDS:-3600}"
 

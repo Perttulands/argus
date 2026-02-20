@@ -15,6 +15,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - Wrapped watchdog breadcrumb load errors with context (`load breadcrumb: ...`) in `internal/watchdog/watchdog.go`.
 
 ### Fixed
+- 2026-02-20: Added `validate_int_env` guards for arithmetic-backed env configs in `actions.sh` (`ARGUS_BEAD_REPEAT_THRESHOLD`, `ARGUS_BEAD_REPEAT_WINDOW_SECONDS`, `ARGUS_DEDUP_WINDOW`, `ARGUS_DISK_CLEAN_MAX_AGE_DAYS`, `ARGUS_RESTART_BACKOFF_SECOND_DELAY`) to fail fast on non-integer or out-of-range values.
 - 2026-02-20: Resolved truthsayer-reported swallowed error paths in `cmd/argus/main.go` by returning wrapped runtime/shutdown errors through `run()` and exiting non-zero in `main`, so failures are no longer silently logged during shutdown.
 - 2026-02-20: Resolved watchdog error-handling gaps in `internal/watchdog/watchdog.go` by propagating cycle errors from `RunCycle`/`Run`, preserving failure state when breadcrumb persistence fails, and handling temp-file cleanup errors instead of discarding them.
 
