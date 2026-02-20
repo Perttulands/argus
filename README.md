@@ -165,6 +165,7 @@ When memory is critical, Argus enriches alerts and problem records with:
 Argus includes offline pattern tooling over `state/problems.jsonl`:
 
 - `scripts/pattern-analysis.sh`: generates `state/pattern-analysis.json` with recurring restart spikes, disk-pressure trends, memory-hog recurrence, and time-correlation signals.
+- `scripts/pattern-detect.sh`: turns analysis output into one daily summary bead per signature and records emissions in `state/patterns.jsonl`.
 
 ## Relay Problem Reports (Optional)
 
