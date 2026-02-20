@@ -22,6 +22,9 @@ ARGUS_BEADS_WORKDIR="${ARGUS_BEADS_WORKDIR:-$HOME/athena/workspace}"
 ARGUS_BEAD_PRIORITY="${ARGUS_BEAD_PRIORITY:-2}"
 ARGUS_BEAD_REPEAT_THRESHOLD="${ARGUS_BEAD_REPEAT_THRESHOLD:-3}"
 ARGUS_BEAD_REPEAT_WINDOW_SECONDS="${ARGUS_BEAD_REPEAT_WINDOW_SECONDS:-86400}"
+ARGUS_DEDUP_FILE="${ARGUS_DEDUP_FILE:-$ARGUS_STATE_DIR/dedup.json}"
+ARGUS_DEDUP_WINDOW="${ARGUS_DEDUP_WINDOW:-3600}"
+ARGUS_DEDUP_RETENTION_SECONDS="${ARGUS_DEDUP_RETENTION_SECONDS:-86400}"
 
 normalize_problem_type() {
     local value="${1:-process}"
@@ -205,6 +208,53 @@ EOF
     if [[ "$bead_id" =~ ^[a-zA-Z0-9._-]+$ ]]; then
         echo "$bead_id"
     fi
+}
+
+ensure_dedup_file() {
+    mkdir -p "$(dirname "$ARGUS_DEDUP_FILE")"
+    if [[ ! -f "$ARGUS_DEDUP_FILE" ]]; then
+        echo '{"keys":{}}' > "$ARGUS_DEDUP_FILE"
+    fi
+}
+
+dedup_compact() {
+    ensure_dedup_file
+    local now tmp_file
+    now=$(date -u +%s)
+    tmp_file="${ARGUS_DEDUP_FILE}.tmp"
+
+    jq --argjson now "$now" --argjson retention "$ARGUS_DEDUP_RETENTION_SECONDS" '
+        .keys = ((.keys // {})
+        | with_entries(select((.value.last_seen // 0) >= ($now - $retention))))
+    ' "$ARGUS_DEDUP_FILE" > "$tmp_file" 2>/dev/null || echo '{"keys":{}}' > "$tmp_file" # REASON: corrupted dedup state should self-heal to an empty map.
+    mv "$tmp_file" "$ARGUS_DEDUP_FILE"
+}
+
+dedup_should_suppress() {
+    local problem_key="${1:-}"
+    [[ -n "$problem_key" ]] || return 1
+
+    dedup_compact
+    local now last_seen
+    now=$(date -u +%s)
+    last_seen=$(jq -r --arg key "$problem_key" '.keys[$key].last_seen // 0' "$ARGUS_DEDUP_FILE" 2>/dev/null || echo 0) # REASON: malformed dedup state should be treated as unsuppressed.
+    [[ "$last_seen" =~ ^[0-9]+$ ]] || last_seen=0
+
+    if (( now - last_seen < ARGUS_DEDUP_WINDOW )); then
+        return 0
+    fi
+
+    local tmp_file
+    tmp_file="${ARGUS_DEDUP_FILE}.tmp"
+    jq --arg key "$problem_key" --argjson now "$now" '
+        .keys = (.keys // {})
+        | .keys[$key] = {
+            last_seen: $now,
+            count: ((.keys[$key].count // 0) + 1)
+        }
+    ' "$ARGUS_DEDUP_FILE" > "$tmp_file" 2>/dev/null || echo '{"keys":{}}' > "$tmp_file" # REASON: dedup write failures should not block action execution.
+    mv "$tmp_file" "$ARGUS_DEDUP_FILE"
+    return 1
 }
 
 relay_enabled_argus() {
@@ -612,10 +662,16 @@ execute_action() {
             problem_type=$(infer_problem_type "$message")
             severity=$(infer_problem_severity "$message")
             action_taken="alert:telegram"
-            if ! action_alert "$message"; then
-                action_result="failure"
-                severity="critical"
-                action_failed=true
+            problem_key=$(generate_problem_key "$problem_type" "$description")
+            if dedup_should_suppress "$problem_key"; then
+                action_result="suppressed"
+                action_taken="alert:suppressed"
+            else
+                if ! action_alert "$message"; then
+                    action_result="failure"
+                    severity="critical"
+                    action_failed=true
+                fi
             fi
             ;;
         log)
@@ -637,7 +693,9 @@ execute_action() {
             ;;
     esac
 
-    problem_key=$(generate_problem_key "$problem_type" "$description")
+    if [[ -z "${problem_key:-}" ]]; then
+        problem_key=$(generate_problem_key "$problem_type" "$description")
+    fi
     recurrence_count=$(problem_occurrences_in_window "$problem_type" "$description")
     if [[ "$recurrence_count" =~ ^[0-9]+$ ]]; then
         seen_count=$((recurrence_count + 1))

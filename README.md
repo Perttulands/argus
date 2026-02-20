@@ -131,6 +131,14 @@ Behavior:
 - Open-bead dedup key: `Problem key: <type>:<description_sha256_16>`
 - If `bd` is unavailable, Argus skips bead creation and continues monitoring.
 
+## Alert Deduplication
+
+Argus suppresses repeat alerts for the same problem key (`<type>:<description_sha256_16>`)
+within `ARGUS_DEDUP_WINDOW` seconds (default `3600`).
+
+Suppression state is kept in `state/dedup.json` and old keys are compacted automatically.
+Suppressed repeats are still written to `state/problems.jsonl` with `action_result: suppressed`.
+
 ## Relay Problem Reports (Optional)
 
 When Relay is available, Argus also publishes structured problem events to Athena:

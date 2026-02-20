@@ -11,6 +11,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - ARG-001 (2026-02-20): Documented the problem registry schema and validation command in `README.md`.
 - ARG-002 (2026-02-20): Added automatic bead creation workflow in `actions.sh` with trigger conditions (failed action, repeated issue, no-auto-fix), bead deduplication by problem key, and `bead_id` persistence in problem records.
 - ARG-002 (2026-02-20): Documented Argus bead creation behavior and added a regression test with mocked `bd` interactions.
+- ARG-003 (2026-02-20): Added problem-key deduplication (`state/dedup.json`) with configurable suppression window (`ARGUS_DEDUP_WINDOW`, default 1 hour) and automatic dedup state compaction.
+- ARG-003 (2026-02-20): Suppressed repeated alert actions now log `action_result: suppressed` in `state/problems.jsonl`, with regression coverage for dedup behavior.
 
 ## [2026-02-20]
 
