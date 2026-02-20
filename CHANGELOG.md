@@ -15,6 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - ARG-003 (2026-02-20): Suppressed repeated alert actions now log `action_result: suppressed` in `state/problems.jsonl`, with regression coverage for dedup behavior.
 - ARG-004 (2026-02-20): Added `clean_disk` action with hardcoded safe cleanup targets (`/tmp`, `/var/tmp`, selected `~/.cache` directories, and log archives), configurable age threshold, and before/after disk alerts.
 - ARG-004 (2026-02-20): Disk cleanup records now include reclaimed-byte context in the problem registry, with dry-run regression coverage for cleanup logging behavior.
+- ARG-005 (2026-02-20): Added memory-hog identification and enrichment for memory alerts/problem records (process, PID, RSS, `%MEM`, runtime, and kill-candidate hint).
+- ARG-005 (2026-02-20): System collector now reports top memory hog context at high memory pressure and includes cgroup memory context when available.
 
 ## [2026-02-20]
 

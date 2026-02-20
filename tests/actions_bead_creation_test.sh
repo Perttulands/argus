@@ -78,8 +78,8 @@ create_count=$(awk '/^create /{count++} END{print count+0}' "$FAKE_BD_LOG")
 assert_eq "$create_count" "1" "first creation call count"
 
 # 2) Existing open bead should be reused (dedup) instead of creating a new one
-dedup_message="Memory pressure high 95%"
-problem_key=$(generate_problem_key "memory" "$dedup_message")
+dedup_message="Disk pressure high 95%"
+problem_key=$(generate_problem_key "disk" "$dedup_message")
 cat > "$FAKE_BD_OPEN_JSON" <<EOF
 [
   {"id":"athena-open","description":"Problem key: ${problem_key}"}

@@ -140,6 +140,17 @@ within `ARGUS_DEDUP_WINDOW` seconds (default `3600`).
 Suppression state is kept in `state/dedup.json` and old keys are compacted automatically.
 Suppressed repeats are still written to `state/problems.jsonl` with `action_result: suppressed`.
 
+## Memory Hog Identification
+
+When memory is critical, Argus enriches alerts and problem records with:
+
+- process name
+- PID
+- RSS (KB)
+- `%MEM`
+- runtime (`etime`)
+- kill-candidate hint (`yes` when process matches `node|claude|codex`)
+
 ## Relay Problem Reports (Optional)
 
 When Relay is available, Argus also publishes structured problem events to Athena:

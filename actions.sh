@@ -68,6 +68,11 @@ infer_problem_severity() {
     fi
 }
 
+is_kill_allowlisted_process() {
+    local process_name="${1:-}"
+    [[ "$process_name" =~ (node|claude|codex) ]]
+}
+
 log_problem() {
     local severity
     severity=$(normalize_problem_severity "${1:-info}")
@@ -529,6 +534,30 @@ disk_root_avail_kb() {
     df --output=avail / 2>/dev/null | tail -n1 | tr -d ' ' # REASON: df can emit transient stderr in containerized environments.
 }
 
+memory_hog_snapshot() {
+    if ! command -v ps >/dev/null 2>&1; then # REASON: some minimal environments may not ship procps tools.
+        return 1
+    fi
+    ps -eo pid=,comm=,%mem=,rss=,etime= --sort=-rss 2>/dev/null | awk 'NR==1{print $1 "|" $2 "|" $3 "|" $4 "|" $5}' # REASON: proc races can produce transient ps stderr.
+}
+
+memory_hog_details_text() {
+    local snapshot
+    snapshot=$(memory_hog_snapshot) || return 1
+    [[ -n "$snapshot" ]] || return 1
+
+    local hog_pid hog_proc hog_pct hog_rss hog_runtime hog_kill_candidate
+    IFS='|' read -r hog_pid hog_proc hog_pct hog_rss hog_runtime <<< "$snapshot"
+    [[ -n "$hog_pid" ]] || return 1
+
+    hog_kill_candidate="no"
+    if is_kill_allowlisted_process "$hog_proc"; then
+        hog_kill_candidate="yes"
+    fi
+
+    echo "hog_process=${hog_proc},hog_pid=${hog_pid},hog_rss_kb=${hog_rss},hog_mem_pct=${hog_pct},hog_runtime=${hog_runtime},hog_kill_candidate=${hog_kill_candidate}"
+}
+
 remove_old_entries() {
     local root="$1"
     local age_days="$2"
@@ -785,6 +814,14 @@ execute_action() {
             problem_type=$(infer_problem_type "$message")
             severity=$(infer_problem_severity "$message")
             action_taken="alert:telegram"
+            if [[ "$problem_type" == "memory" ]]; then
+                local hog_details
+                hog_details=$(memory_hog_details_text || true) # REASON: memory-hog enrichment is best-effort and should not block alerts.
+                if [[ -n "$hog_details" ]]; then
+                    message="${message} | ${hog_details}"
+                    description="${description}; ${hog_details}"
+                fi
+            fi
             problem_key=$(generate_problem_key "$problem_type" "$description")
             if dedup_should_suppress "$problem_key"; then
                 action_result="suppressed"
@@ -804,6 +841,13 @@ execute_action() {
             problem_type=$(infer_problem_type "$observation")
             severity=$(infer_problem_severity "$observation")
             action_taken="log:observation"
+            if [[ "$problem_type" == "memory" ]]; then
+                local hog_details
+                hog_details=$(memory_hog_details_text || true) # REASON: memory-hog enrichment is best-effort and should not block logging.
+                if [[ -n "$hog_details" ]]; then
+                    description="${description}; ${hog_details}"
+                fi
+            fi
             if ! action_log "$observation"; then
                 action_result="failure"
                 severity="critical"
