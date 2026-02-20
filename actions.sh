@@ -27,6 +27,10 @@ ARGUS_DEDUP_WINDOW="${ARGUS_DEDUP_WINDOW:-3600}"
 ARGUS_DEDUP_RETENTION_SECONDS="${ARGUS_DEDUP_RETENTION_SECONDS:-86400}"
 ARGUS_DISK_CLEAN_MAX_AGE_DAYS="${ARGUS_DISK_CLEAN_MAX_AGE_DAYS:-7}"
 ARGUS_DISK_CLEAN_DRY_RUN="${ARGUS_DISK_CLEAN_DRY_RUN:-false}"
+ARGUS_RESTART_BACKOFF_FILE="${ARGUS_RESTART_BACKOFF_FILE:-$ARGUS_STATE_DIR/restart-backoff.json}"
+ARGUS_RESTART_BACKOFF_SECOND_DELAY="${ARGUS_RESTART_BACKOFF_SECOND_DELAY:-60}"
+ARGUS_RESTART_BACKOFF_THIRD_DELAY="${ARGUS_RESTART_BACKOFF_THIRD_DELAY:-300}"
+ARGUS_RESTART_COOLDOWN_SECONDS="${ARGUS_RESTART_COOLDOWN_SECONDS:-3600}"
 
 normalize_problem_type() {
     local value="${1:-process}"
@@ -329,6 +333,45 @@ action_restart_service() {
         return 1
     fi
 
+    local now attempts last_attempt last_success cooldown_until
+    now=$(now_epoch)
+    attempts=$(restart_backoff_get "$service_name" "attempts" 0)
+    last_attempt=$(restart_backoff_get "$service_name" "last_attempt" 0)
+    last_success=$(restart_backoff_get "$service_name" "last_success" 0)
+    cooldown_until=$(restart_backoff_get "$service_name" "cooldown_until" 0)
+    [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=0
+    [[ "$last_attempt" =~ ^[0-9]+$ ]] || last_attempt=0
+    [[ "$last_success" =~ ^[0-9]+$ ]] || last_success=0
+    [[ "$cooldown_until" =~ ^[0-9]+$ ]] || cooldown_until=0
+
+    if (( now < cooldown_until )); then
+        local remaining=$((cooldown_until - now))
+        echo "BACKOFF: Service $service_name in cooldown for ${remaining}s" >&2
+        ARGUS_LAST_RESTART_BACKOFF_STATUS="cooldown:${remaining}"
+        return 2
+    fi
+
+    local next_attempt=$((attempts + 1))
+    local required_wait=0
+    if (( next_attempt == 2 )); then
+        required_wait=$ARGUS_RESTART_BACKOFF_SECOND_DELAY
+    elif (( next_attempt == 3 )); then
+        required_wait=$ARGUS_RESTART_BACKOFF_THIRD_DELAY
+    elif (( next_attempt >= 4 )); then
+        cooldown_until=$((now + ARGUS_RESTART_COOLDOWN_SECONDS))
+        restart_backoff_set "$service_name" "$attempts" "$last_attempt" "$last_success" "$cooldown_until"
+        echo "BACKOFF: Restart loop detected for $service_name (attempt ${next_attempt}); entering cooldown ${ARGUS_RESTART_COOLDOWN_SECONDS}s" >&2
+        ARGUS_LAST_RESTART_BACKOFF_STATUS="loop-detected:${next_attempt}"
+        return 3
+    fi
+
+    if (( required_wait > 0 )) && (( last_attempt > 0 )) && (( now - last_attempt < required_wait )); then
+        local remaining_wait=$((required_wait - (now - last_attempt)))
+        echo "BACKOFF: Wait ${remaining_wait}s before retrying $service_name (attempt ${next_attempt})" >&2
+        ARGUS_LAST_RESTART_BACKOFF_STATUS="wait:${remaining_wait}"
+        return 2
+    fi
+
     echo "Restarting service: $service_name (reason: $reason)"
 
     # Check current state first
@@ -338,6 +381,8 @@ action_restart_service() {
 
     if ! systemctl restart "$service_name" 2>&1; then
         echo "ERROR: systemctl restart $service_name failed" >&2
+        restart_backoff_set "$service_name" "$next_attempt" "$now" "$last_success" 0
+        ARGUS_LAST_RESTART_BACKOFF_STATUS="failed:${next_attempt}"
         return 1
     fi
 
@@ -347,8 +392,12 @@ action_restart_service() {
     new_state=$(systemctl is-active "$service_name" 2>/dev/null || echo "unknown") # REASON: unavailable units are expected when restart fails.
     if [[ "$new_state" == "active" ]]; then
         echo "Service $service_name restarted successfully (now: $new_state)"
+        restart_backoff_set "$service_name" 0 "$now" "$now" 0
+        ARGUS_LAST_RESTART_BACKOFF_STATUS="success"
     else
         echo "WARNING: Service $service_name restart may have failed (state: $new_state)" >&2
+        restart_backoff_set "$service_name" "$next_attempt" "$now" "$last_success" 0
+        ARGUS_LAST_RESTART_BACKOFF_STATUS="failed:${next_attempt}"
         return 1
     fi
 }
@@ -524,6 +573,52 @@ bool_env_true() {
         1|true|yes|on) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+now_epoch() {
+    date -u +%s
+}
+
+ensure_restart_backoff_file() {
+    mkdir -p "$(dirname "$ARGUS_RESTART_BACKOFF_FILE")"
+    if [[ ! -f "$ARGUS_RESTART_BACKOFF_FILE" ]]; then
+        echo '{"services":{}}' > "$ARGUS_RESTART_BACKOFF_FILE"
+    fi
+}
+
+restart_backoff_get() {
+    local service_name="$1"
+    local field="$2"
+    local default_value="${3:-0}"
+    ensure_restart_backoff_file
+    jq -r --arg service "$service_name" --arg field "$field" --arg default "$default_value" \
+        '.services[$service][$field] // $default' "$ARGUS_RESTART_BACKOFF_FILE" 2>/dev/null || echo "$default_value" # REASON: malformed state should degrade to safe defaults.
+}
+
+restart_backoff_set() {
+    local service_name="$1"
+    local attempts="$2"
+    local last_attempt="$3"
+    local last_success="$4"
+    local cooldown_until="$5"
+    ensure_restart_backoff_file
+
+    local tmp_file
+    tmp_file="${ARGUS_RESTART_BACKOFF_FILE}.tmp"
+    jq --arg service "$service_name" \
+        --argjson attempts "$attempts" \
+        --argjson last_attempt "$last_attempt" \
+        --argjson last_success "$last_success" \
+        --argjson cooldown_until "$cooldown_until" \
+        '
+        .services = (.services // {})
+        | .services[$service] = {
+            attempts: $attempts,
+            last_attempt: $last_attempt,
+            last_success: $last_success,
+            cooldown_until: $cooldown_until
+        }' "$ARGUS_RESTART_BACKOFF_FILE" > "$tmp_file" 2>/dev/null || echo '{"services":{}}' > "$tmp_file" # REASON: failed state writes should not break action execution.
+    mv "$tmp_file" "$ARGUS_RESTART_BACKOFF_FILE"
 }
 
 disk_root_pct() {
@@ -767,10 +862,30 @@ execute_action() {
             problem_type="service"
             severity="warning"
             description="Service action for ${target}: ${reason}"
-            if ! action_restart_service "$target" "$reason"; then
-                action_result="failure"
-                severity="critical"
-                action_failed=true
+            local restart_rc=0
+            if action_restart_service "$target" "$reason"; then
+                restart_rc=0
+            else
+                restart_rc=$?
+                case "$restart_rc" in
+                2)
+                    action_result="skipped"
+                    severity="warning"
+                    description="${description}; restart_backoff=${ARGUS_LAST_RESTART_BACKOFF_STATUS:-wait}"
+                    ;;
+                3)
+                    action_result="failure"
+                    severity="critical"
+                    description="${description}; restart_backoff=${ARGUS_LAST_RESTART_BACKOFF_STATUS:-loop-detected}"
+                    action_failed=true
+                    ;;
+                *)
+                    action_result="failure"
+                    severity="critical"
+                    description="${description}; restart_backoff=${ARGUS_LAST_RESTART_BACKOFF_STATUS:-failed}"
+                    action_failed=true
+                    ;;
+                esac
             fi
             ;;
         kill_pid)

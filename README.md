@@ -151,6 +151,15 @@ When memory is critical, Argus enriches alerts and problem records with:
 - runtime (`etime`)
 - kill-candidate hint (`yes` when process matches `node|claude|codex`)
 
+## Restart Backoff
+
+`restart_service` actions use persistent per-service backoff state (`state/restart-backoff.json`):
+
+- attempt 1: immediate
+- attempt 2: wait `ARGUS_RESTART_BACKOFF_SECOND_DELAY` (default 60s)
+- attempt 3: wait `ARGUS_RESTART_BACKOFF_THIRD_DELAY` (default 300s)
+- attempt 4+: mark restart loop, create/attach bead, and cooldown for `ARGUS_RESTART_COOLDOWN_SECONDS` (default 3600s)
+
 ## Relay Problem Reports (Optional)
 
 When Relay is available, Argus also publishes structured problem events to Athena:
