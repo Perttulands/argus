@@ -193,6 +193,19 @@ If Relay is unavailable, Argus appends the same event JSON to:
 
 This keeps Argus operational even during Relay outages.
 
+For daily health summaries, use:
+
+```bash
+scripts/relay-summary.sh
+```
+
+Behavior:
+
+- Sends `argus.daily_summary` to Relay when available
+- Falls back to `state/relay-summary-fallback.jsonl` when Relay is unavailable
+- Optionally falls back to direct Telegram if bot credentials are configured
+- Includes `ARGUS_DASHBOARD_URL` link in summary payload when set
+
 ## For Agents
 
 This repo includes `AGENTS.md` with operational instructions.

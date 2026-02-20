@@ -25,6 +25,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - ARG-008 (2026-02-20): Added daily signature dedup state (`state/pattern-detect-state.json`) so identical pattern summaries are emitted at most once per day, with detection regression tests.
 - ARG-009 (2026-02-20): Added `scripts/argus-stats.sh` for historical metrics export with counts by type/severity/action result, action success rate, and hourly/daily bucketed trend data.
 - ARG-009 (2026-02-20): Added regression coverage for stats export output and documented stats export usage for dashboard integrations.
+- ARG-010 (2026-02-20): Added optional Relay daily summary integration (`scripts/relay-summary.sh`) that publishes `argus.daily_summary` payloads with stats/pattern context.
+- ARG-010 (2026-02-20): Added resilient Relay fallback behavior (JSONL queue + optional Telegram fallback) and dashboard-link support via `ARGUS_DASHBOARD_URL`, with regression tests.
 
 ## [2026-02-20]
 
