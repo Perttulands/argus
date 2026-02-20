@@ -9,6 +9,59 @@ set -euo pipefail
 ALLOWED_SERVICES=()
 TELEGRAM_TIMEOUT=10   # seconds for Telegram API calls
 TELEGRAM_MAX_RETRIES=2 # retry failed Telegram sends
+ARGUS_RELAY_ENABLED="${ARGUS_RELAY_ENABLED:-true}"
+ARGUS_RELAY_BIN="${ARGUS_RELAY_BIN:-$HOME/go/bin/relay}"
+ARGUS_RELAY_TO="${ARGUS_RELAY_TO:-athena}"
+ARGUS_RELAY_FROM="${ARGUS_RELAY_FROM:-argus}"
+ARGUS_RELAY_TIMEOUT="${ARGUS_RELAY_TIMEOUT:-5}"
+ARGUS_RELAY_FALLBACK_FILE="${ARGUS_RELAY_FALLBACK_FILE:-$HOME/athena/state/argus/relay-fallback.jsonl}"
+
+relay_enabled_argus() {
+    case "${ARGUS_RELAY_ENABLED,,}" in
+        1|true|yes|on) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+relay_queue_fallback() {
+    local payload="$1"
+    mkdir -p "$(dirname "$ARGUS_RELAY_FALLBACK_FILE")"
+    printf '%s\n' "$payload" >> "$ARGUS_RELAY_FALLBACK_FILE"
+}
+
+relay_publish_problem() {
+    local severity="${1:-info}"
+    local problem_type="${2:-observation}"
+    local message="${3:-}"
+    local action_taken="${4:-log}"
+    [[ -n "$message" ]] || return 0
+
+    local host timestamp payload
+    host=$(hostname -f 2>/dev/null || hostname)
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    payload=$(jq -cn \
+        --arg type "alert" \
+        --arg source "argus" \
+        --arg event "argus.problem" \
+        --arg severity "$severity" \
+        --arg problem_type "$problem_type" \
+        --arg message "$message" \
+        --arg action_taken "$action_taken" \
+        --arg host "$host" \
+        --arg ts "$timestamp" \
+        '{type:$type, source:$source, event:$event, severity:$severity, problem_type:$problem_type, message:$message, action_taken:$action_taken, host:$host, timestamp:$ts}') || return 0
+
+    if relay_enabled_argus && [[ -x "$ARGUS_RELAY_BIN" ]]; then
+        if timeout "$ARGUS_RELAY_TIMEOUT" "$ARGUS_RELAY_BIN" send "$ARGUS_RELAY_TO" "$payload" \
+            --agent "$ARGUS_RELAY_FROM" \
+            --priority high \
+            --tag "argus,problem,alert" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    relay_queue_fallback "$payload"
+}
 
 action_restart_service() {
     local service_name="$1"
@@ -116,6 +169,8 @@ action_alert() {
         message="[${hostname_tag}] ${message}"
     fi
 
+    relay_publish_problem "critical" "alert" "$message" "alert" || true
+
     if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]] || [[ -z "${TELEGRAM_CHAT_ID:-}" ]]; then
         echo "WARNING: Telegram credentials not configured — alert logged only" >&2
         echo "ALERT (not sent): $message"
@@ -184,6 +239,14 @@ action_log() {
 
     echo "- **[$timestamp]** $observation" >> "$log_file"
     echo "Observation logged: $observation"
+
+    local severity="info"
+    if [[ "$observation" =~ [Cc][Rr][Ii][Tt][Ii][Cc][Aa][Ll]|[Ff][Aa][Ii][Ll]|[Dd][Oo][Ww][Nn]|[Uu][Nn][Rr][Ee][Aa][Cc][Hh][Aa][Bb][Ll][Ee] ]]; then
+        severity="critical"
+    elif [[ "$observation" =~ [Ww][Aa][Rr][Nn]|[Hh][Ii][Gg][Hh] ]]; then
+        severity="warning"
+    fi
+    relay_publish_problem "$severity" "observation" "$observation" "log" || true
 
     # Check if this is a repeated problem (same observation 3+ times)
     # Use fixed-string grep to avoid regex injection from observation text

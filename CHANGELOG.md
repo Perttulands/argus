@@ -6,6 +6,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased]
 
+### Added
+- Optional Relay problem publishing in `actions.sh` with configurable route/sender/timeout and automatic JSONL fallback when Relay is unavailable.
+
 ### Changed
 - README: mythology-forward rewrite — each README now reads like discovering a character in a world
 

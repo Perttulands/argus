@@ -92,6 +92,18 @@ No arbitrary command execution. Every input is validated like it's trying to esc
 - Clean shutdown on SIGTERM/SIGINT
 - JSON state via `jq` (no injection from error messages)
 
+## Relay Problem Reports (Optional)
+
+When Relay is available, Argus also publishes structured problem events to Athena:
+- Event type: `argus.problem`
+- Route: `ARGUS_RELAY_TO` (default: `athena`)
+- Sender: `ARGUS_RELAY_FROM` (default: `argus`)
+
+If Relay is unavailable, Argus appends the same event JSON to:
+- `ARGUS_RELAY_FALLBACK_FILE` (default: `~/athena/state/argus/relay-fallback.jsonl`)
+
+This keeps Argus operational even during Relay outages.
+
 ## For Agents
 
 This repo includes `AGENTS.md` with operational instructions.
