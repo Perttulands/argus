@@ -23,6 +23,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - ARG-007 (2026-02-20): Added regression coverage for pattern analysis output generation and documented pattern-analysis workflows in README.
 - ARG-008 (2026-02-20): Added `scripts/pattern-detect.sh` to convert analysis output into summary beads and append structured pattern-report events to `state/patterns.jsonl`.
 - ARG-008 (2026-02-20): Added daily signature dedup state (`state/pattern-detect-state.json`) so identical pattern summaries are emitted at most once per day, with detection regression tests.
+- ARG-009 (2026-02-20): Added `scripts/argus-stats.sh` for historical metrics export with counts by type/severity/action result, action success rate, and hourly/daily bucketed trend data.
+- ARG-009 (2026-02-20): Added regression coverage for stats export output and documented stats export usage for dashboard integrations.
 
 ## [2026-02-20]
 

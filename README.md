@@ -167,6 +167,20 @@ Argus includes offline pattern tooling over `state/problems.jsonl`:
 - `scripts/pattern-analysis.sh`: generates `state/pattern-analysis.json` with recurring restart spikes, disk-pressure trends, memory-hog recurrence, and time-correlation signals.
 - `scripts/pattern-detect.sh`: turns analysis output into one daily summary bead per signature and records emissions in `state/patterns.jsonl`.
 
+## Historical Metrics Export
+
+Use `scripts/argus-stats.sh` to export dashboard-friendly JSON from `state/problems.jsonl`:
+
+```bash
+# Print stats JSON to stdout
+scripts/argus-stats.sh
+
+# Write stats JSON to a file
+scripts/argus-stats.sh state/argus-stats.json
+```
+
+Output includes counts by type/severity/action result, success rate, and hourly/daily buckets.
+
 ## Relay Problem Reports (Optional)
 
 When Relay is available, Argus also publishes structured problem events to Athena:
