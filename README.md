@@ -2,8 +2,6 @@
 
 ![Argus](images/argus.jpg)
 
-![Banner](images/banner-argus.jpg)
-
 *One red eye. Spiked collar. Zero chill.*
 
 ---
